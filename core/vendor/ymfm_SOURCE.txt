@@ -1,0 +1,39 @@
+ymfm source archive provenance
+==============================
+
+Project      : ymfm -- Yamaha FM sound cores (OPM/OPN/OPL/...) by Aaron Giles
+Repository   : https://github.com/aaronsgiles/ymfm
+Default branch: main
+License      : BSD 3-clause (see vendor/ymfm/LICENSE)
+
+Commit        : 81aec25ccbb98f4873a255f7551ac4dadac59b4a
+Commit date   : 2026-07-27 08:11:55 -0700
+Commit subject: ymfm_opn.cpp: writes to not set a 'latch was written flag', and
+                OPNA does not have 4 latches (#67)
+Fetched at    : 2026-10-03T10:55:34Z (UTC)  [local clock 2026-10-03 18:55 UTC+8]
+Fetched by    : PI-Desktop / necopn_player core build (Python 3.12 urllib)
+
+How it was obtained
+-------------------
+1. File list: GitHub API
+       https://api.github.com/repos/aaronsgiles/ymfm/git/trees/main?recursive=1
+   was attempted first, but the unauthenticated API quota on this machine was
+   exhausted (HTTP 403 "rate limit exceeded", reset in ~50 min).  The equivalent
+   complete file listing was therefore taken from
+       git clone --depth 1 https://github.com/aaronsgiles/ymfm.git
+       git ls-tree -r HEAD --name-only
+   (32 files; the commit sha above is the cloned HEAD of `main`).
+2. Every one of the 32 files was then downloaded individually from the raw
+   endpoint pinned to that exact commit:
+       https://raw.githubusercontent.com/aaronsgiles/ymfm/81aec25ccbb98f4873a255f7551ac4dadac59b4a/<path>
+   and stored under vendor/ymfm/ with its relative path preserved.
+
+This archive is a byte-exact copy of the 32 files of that commit (raw downloads,
+no edits).  Only these files exist in the commit tree; no submodules.
+
+Layout
+------
+vendor/ymfm/src/            the cores (headers + .cpp, .ipp)
+vendor/ymfm/examples/       vgmrender / buildall examples
+vendor/ymfm/GeneralInfo.md  register-map documentation
+vendor/ymfm/LICENSE         BSD 3-clause
