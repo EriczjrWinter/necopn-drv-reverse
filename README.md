@@ -1,8 +1,10 @@
-# NECOPN.DRV Reverse Engineering & Renderer (English)
+# NECOPN.DRV Reverse Engineering & Renderer
 
 This project is a deep reverse engineering and high-fidelity reimplementation of the `NECOPN.DRV` MIDI driver, exclusively used in NEC PC-9821 running Windows 95. By combining Python with a custom C++ core, it aims to reproduce the exact sonic behavior and voice allocation logic of the original hardware.
 
 > **🎯 Status**: Basic complete reproduction of the original hardware (Pitch, Envelope, Voice allocation, and Rhythm) is achieved. (Excluding the software LFO feature, which has known limitations).
+> 
+> **📦 Out-of-the-box**: A hardcoded `fixed_bank.py` (extracted from the original driver) is included. **You do NOT need the original `NECOPN.DRV` to run the player.**
 
 ## 🏗️ Architecture & Core Notes
 
@@ -14,24 +16,24 @@ We initially used `ymfm`. However, during waveform comparisons against real hard
 *Note: For API compatibility, the Python wrapper class remains named `YmfmCore`, but dynamically loads `necopna_fmgen.dll`.*
 
 ## 📦 Required Assets
-**Due to copyright restrictions, this repo does NOT distribute any original binaries or samples.**
 
-1. **`NECOPN.DRV`**
-   * **Source**: Extract from a Japanese PC-98 Windows 95 image.
-   * **Location**: **Place `NECOPN.DRV` directly in the root directory** (where `player.py` is located). Alternatively, use `--drv <path>`.
+1. **Built-in Voice Bank**
+   * The 128 GM voices are already hardcoded in `fixed_bank.py` (extracted via reverse engineering). No external bank files are required.
+   * *(Optional)* If you have the original `NECOPN.DRV`, you can place it in the root directory and the player will automatically verify and load from it.
 2. **Rhythm WAVs (`RHY` folder)**
    * **Source**: You must provide 6 16-bit PCM WAVs named exactly: `2608_bd.wav`, `2608_sd.wav`, `2608_top.wav`, `2608_hh.wav`, `2608_tom.wav`, `2608_rim.wav`.
    * **Location**: Place them in a folder (e.g., `RHY/`). You **MUST specify the path manually** using `--rhythm-rom <path>`, otherwise rhythm will be silent.
 
 ## 🚀 Quick Start
-```bash
-# Render to WAV
-python player.py example.mid -o output.wav --rhythm-rom ./RHY
 
-# Export to VGM (Side feature, may have compatibility issues)
-python player.py example.mid -o output.vgm --vgm
+```bash
+# Render to WAV (No DRV required!)
+python player.py your_song.mid -o output.wav --rhythm-rom ./RHY
+
+# Export to VGM (Side feature)
+python player.py your_song.mid -o output.vgm --vgm
 🗂️ About necopn_reverse/ (Byproducts)
-NECOPN_GM.wopn: A byproduct WOPN bank generated from our reverse engineering. NOTE: It is strictly for visual inspection (e.g., in OPN2-BE) and is NOT used by the Python player. The player reads the raw records directly from the .DRV file.
+NECOPN_GM.wopn: A byproduct WOPN bank generated from our reverse engineering. NOTE: It is strictly for visual inspection (e.g., in OPN2-BE) and is NOT used by the Python player. The player uses fixed_bank.py.
 
 ⚠️ Known Issues
 Software LFO Noise: Enabling --enable-lfo may cause slight background noise due to high-frequency phase resets. It is disabled by default for clean audio.
@@ -39,7 +41,7 @@ Software LFO Noise: Enabling --enable-lfo may cause slight background noise due 
 VGM Export Issue: Exported .vgm files may fail to play in strict players like foobar2000. This is a side-feature and is currently deprioritized.
 
 🔬 Technical Details
-Voice Decoding: Reads 64-byte records directly from the DRV, mapping hardware values via the cs:0x1239 inversion table.
+Voice Decoding: Reads 64-byte records directly from the driver, mapping hardware values via the cs:0x1239 inversion table.
 
 Velocity & Envelope: Strictly follows the operator mask logic at 0x0BED and hardware SR/DR mechanisms.
 

@@ -2,7 +2,7 @@
 """NECOPN 播放器 CLI —— MIDI -> WAV / VGM / 寄存器 trace。
 
 用法示例：
-    python player.py song.mid -o song.wav                 # 用 fmgen 核心出 WAV
+    python player.py song.mid -o song.wav                 # 优先使用内置硬编码音色库，无库时找 DRV
     python player.py song.mid -o song.vgm --vgm           # 寄存器流（foobar vgmplay 可播）
     python player.py song.mid --core null --trace t.txt   # 无 DLL 时只看寄存器
 """
@@ -24,8 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DRV = os.path.join(HERE, "NECOPN.DRV")
 
 
-# ------------------------------------------------------------------ 音色库
-def load_bank(drv_path: str):
+# ------------------------------------------------------------------ 音色库读取
+def load_bank_from_drv(drv_path: str):
     """从 NECOPN.DRV 直接读 FMPARA(128x64B) + FMOCTAVE(128B)。"""
     data = open(drv_path, "rb").read()
     bank = data[0x5510:0x5510 + 0x2000]
@@ -34,6 +34,15 @@ def load_bank(drv_path: str):
         raise ValueError("FMPARA 资源尺寸不对")
     voices = [Voice.from_record(bank[i * 0x40:(i + 1) * 0x40]) for i in range(128)]
     return voices, list(oct_)
+
+
+def load_bank(drv_path: str):
+    if os.path.exists(drv_path):
+        voices, fmoct = load_bank_from_drv(drv_path)
+        print(f"音色库: 128 条（从 {os.path.basename(drv_path)} 提取）")
+        return voices, fmoct
+    else:
+        raise FileNotFoundError(f"找不到 NECOPN.DRV ({drv_path})")
 
 
 # ------------------------------------------------------------------ 渲染
@@ -53,7 +62,6 @@ def mix_cores(cores, nframes: int) -> bytes:
 
 
 def _sync_time(cores, t: float) -> None:
-    """把带时间轴的核心（VgmTap）定位到 t，保证寄存器写的时间戳正确。"""
     for c in cores:
         f = getattr(c, "set_time", None)
         if f is not None:
@@ -70,33 +78,24 @@ def render(system: NecopnSystem, cores, events, total_sec: float, sr: int,
     next_tick = 0.0
     while frames < total_frames:
         now = frames / sr
-        # 处理 MIDI 事件
         while ei < len(events) and events[ei].t <= now:
             e = events[ei]
             system.time = e.t
             _sync_time(cores, e.t)
-            if e.kind == "on":
-                system.note_on(e.ch, e.d1, e.d2)
-            elif e.kind == "off":
-                system.note_off(e.ch, e.d1)
-            elif e.kind == "cc":
-                system.control_change(e.ch, e.d1, e.d2)
-            elif e.kind == "prog":
-                system.program_change(e.ch, e.d1)
-            elif e.kind == "bend":
-                system.pitch_bend(e.ch, e.d1, e.d2)
+            if e.kind == "on": system.note_on(e.ch, e.d1, e.d2)
+            elif e.kind == "off": system.note_off(e.ch, e.d1)
+            elif e.kind == "cc": system.control_change(e.ch, e.d1, e.d2)
+            elif e.kind == "prog": system.program_change(e.ch, e.d1)
+            elif e.kind == "bend": system.pitch_bend(e.ch, e.d1, e.d2)
             ei += 1
-        # 处理所有 <= now 的 tick
         while next_tick <= now:
             system.time = next_tick
             _sync_time(cores, next_tick)
             system.tick()
             next_tick += tick_iv
         _sync_time(cores, now)
-        # 下一个 chunk 大小 = 到下一个 tick 边界的帧数
         next_boundary = int(next_tick * sr)
-        if next_boundary <= frames:
-            next_boundary = frames + 1        # 防止死锁
+        if next_boundary <= frames: next_boundary = frames + 1
         n = min(next_boundary - frames, chunk_cap, total_frames - frames)
         out += mix_cores(cores, n)
         frames += n
@@ -113,43 +112,38 @@ def write_wav(path: str, pcm: bytes, sr: int) -> None:
 
 # ------------------------------------------------------------------ 主流程
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="NECOPN 驱动复现播放器 / NECOPN Driver Reimplementation Player")
-    ap.add_argument("midi", help="标准 MIDI 文件 / Standard MIDI File")
-    ap.add_argument("-o", "--out", help="输出文件 / Output file (.wav or .vgm)")
-    ap.add_argument("--drv", default=DEFAULT_DRV, help="NECOPN.DRV 路径 / Path to NECOPN.DRV")
-    ap.add_argument("--core", default="auto", choices=["auto", "fmgen", "null"],
-                    help="模拟核心 / Emulator core (default: auto)")
-    ap.add_argument("--clock", type=int, default=8_000_000, help="OPNA 时钟 / OPNA clock")
-    ap.add_argument("--enable-lfo", action="store_true", help="开启软件 LFO（已知有高频噪音）/ Enable software LFO")
-    ap.add_argument("--rhythm-rom", metavar="DIR", default=None,
-                    help="原生打击乐 WAV 文件夹路径 / Directory containing rhythm WAVs (2608_bd.wav, etc.)")
-    ap.add_argument("--vgm", action="store_true", help="输出 VGM / Output VGM stream")
-    ap.add_argument("--trace", help="记录寄存器写到文本 / Write register trace to text")
-    ap.add_argument("--tail", type=float, default=1.0, help="尾音秒数 / Tail seconds")
+    ap = argparse.ArgumentParser(description="NECOPN 驱动复现播放器")
+    ap.add_argument("midi", help="标准 MIDI 文件")
+    ap.add_argument("-o", "--out", help="输出文件 (.wav 或 .vgm)")
+    ap.add_argument("--drv", default=DEFAULT_DRV, help="NECOPN.DRV 路径")
+    ap.add_argument("--core", default="auto", choices=["auto", "fmgen", "null"])
+    ap.add_argument("--clock", type=int, default=8_000_000)
+    ap.add_argument("--enable-lfo", action="store_true", help="开启软件 LFO")
+    ap.add_argument("--rhythm-rom", metavar="DIR", default=None, help="原生打击乐 WAV 文件夹")
+    ap.add_argument("--vgm", action="store_true")
+    ap.add_argument("--trace", help="记录寄存器写到文本")
+    ap.add_argument("--tail", type=float, default=1.0)
     args = ap.parse_args(argv)
 
-    if not os.path.exists(args.drv):
-        print(f"错误 / Error: 找不到驱动文件 / Driver file not found: {args.drv}", file=sys.stderr)
-        print("-" * 70, file=sys.stderr)
-        print("【中文】由于版权原因，本项目不直接分发 NECOPN.DRV。", file=sys.stderr)
-        print("请从PC-98 Windows 95 镜像环境中提取该文件，", file=sys.stderr)
-        print("并使用 `--drv <路径>` 参数指定。", file=sys.stderr)
-        print("-" * 70, file=sys.stderr)
-        print("[EN] Due to copyright restrictions, this project does not distribute NECOPN.DRV.", file=sys.stderr)
-        print("Please extract it from a PC-98 Windows 95 image,", file=sys.stderr)
-        print("and specify the path using the `--drv <path>` argument.", file=sys.stderr)
-        print("-" * 70, file=sys.stderr)
-        return 2
-
-    voices, fmoctave = load_bank(args.drv)
-    print(f"音色库: 128 条（{os.path.basename(args.drv)}）；"
-          f"FMOCTAVE 移调范围 {min(fmoctave)}..{max(fmoctave)}")
+    # 1. 优先尝试加载硬编码的 fixed_bank.py（脱离版权文件，且最精准）
+    try:
+        from fixed_bank import VOICES_DATA, FMOCTAVE
+        voices = [Voice.from_record(bytes(r)) for r in VOICES_DATA]
+        fmoctave = list(FMOCTAVE)
+        print("音色库: 128 条（使用内置硬编码数据 / 无需 NECOPN.DRV）")
+    except ImportError:
+        # 2. 如果没有 fixed_bank.py，退化到从 DRV 读取
+        try:
+            voices, fmoctave = load_bank(args.drv)
+        except FileNotFoundError as e:
+            print(f"错误: {e}", file=sys.stderr)
+            print("请提供 NECOPN.DRV，或确保 fixed_bank.py 与 player.py 在同一目录下。", file=sys.stderr)
+            return 2
 
     data = open(args.midi, "rb").read()
     events, tpq, total_sec = parse_smf(data)
     print(f"MIDI: {len(events)} 事件，{total_sec:.2f}s，tpq={tpq}")
 
-    # 硬件事实：NECOPN 驱动写死双芯片 (2 cores)
     n_cores = 2
     cores: list = []
     used = args.core
@@ -157,18 +151,14 @@ def main(argv=None) -> int:
         c, used = make_core(args.core, args.clock, rhythm_rom=args.rhythm_rom)
         cores.append(c)
     print(f"核心: {used} x{n_cores}（双芯片 OPNA）")
-    if used == "fmgen":
-        print(f"打击乐 ROM: {args.rhythm_rom if args.rhythm_rom else '内置合成（无声）'}")
 
     want_vgm = args.vgm or (args.out or "").lower().endswith(".vgm")
     taps = [VgmTap(c, args.clock) for c in cores] if want_vgm else []
-    sys_cores = taps or cores          # 让驱动的寄存器写经过 VGM 记录器
+    sys_cores = taps or cores
 
-    system = NecopnSystem(sys_cores, clock=args.clock,
-                          lfo_enabled=args.enable_lfo)
+    system = NecopnSystem(sys_cores, clock=args.clock, lfo_enabled=args.enable_lfo)
     system.load_bank(voices, fmoctave)
-    if args.trace:
-        system.trace = []
+    if args.trace: system.trace = []
 
     sr = cores[0].sample_rate()
     pcm = render(system, sys_cores, events, total_sec, sr, tail=args.tail)
@@ -176,15 +166,10 @@ def main(argv=None) -> int:
     if want_vgm:
         out_path = args.out or os.path.splitext(args.midi)[0] + ".vgm"
         blobs = [t.build(total_sec + args.tail) for t in taps]
-        if len(blobs) == 1:
-            open(out_path, "wb").write(blobs[0])
-        else:
-            # NECOPN 是双芯片，默认输出两个 VGM 文件，分别对应 chip0 和 chip1
-            open(out_path, "wb").write(blobs[0])
-            for i, b in enumerate(blobs[1:], 1):
-                open(f"{out_path}.chip{i}", "wb").write(b)
-            print(f"VGM -> {out_path} 及 .chip1")
-        print(f"VGM -> {out_path}（{len(blobs)} 个文件，每颗芯片一个）")
+        open(out_path, "wb").write(blobs[0])
+        for i, b in enumerate(blobs[1:], 1):
+            open(f"{out_path}.chip{i}", "wb").write(b)
+        print(f"VGM -> {out_path} 及 .chip1")
     elif args.out:
         write_wav(args.out, pcm, sr)
         peak = max(abs(v) for v in struct.unpack("<%dh" % (len(pcm) // 2), pcm)) if pcm else 0
@@ -194,10 +179,10 @@ def main(argv=None) -> int:
         with open(args.trace, "w", encoding="utf-8") as f:
             for t, chip, reg, val in system.trace:
                 f.write(f"{t:10.4f}  chip{chip}  {reg:02X} = {val:02X}\n")
-        print(f"trace -> {args.trace}（{len(system.trace)} 次寄存器写）")
+        print(f"trace -> {args.trace}")
 
     if not args.out and not args.trace and not want_vgm:
-        print("未指定输出（用 -o out.wav 或 --trace t.txt）")
+        print("未指定输出（用 -o out.wav）")
     return 0
 
 
