@@ -4,10 +4,10 @@ NECOPN.DRV 音色库提取器: 8KB FMPARA/"VoicePara" 资源 -> WOPN v2 bank (OP
 
 字段映射来源(逆向 seg3:0xBB9 装载器 / 0x126D 组写入器 / 0x11F8 读取器 / 0x1239 取反表):
   记录(64B) --copy 51B--> 工作区(0x26F4+ch*0x34), 逻辑索引>0x14 时读取器 +1 跳过运行时字段
-  **记录存的是取反值**：AR/DR/SR = 0x1F-rec，SL/RR = 0x0F-rec，TL = 0x7F-rec
+  **记录存的是取反值**：AR/DR/SR = 0x1F-rec，TL = 0x7F-rec
+  **注意**：SL/RR 不取反（WOPN 规范直接期望硬件值）
   TL 真实来源 = 记录 0x1B-0x1E（逻辑 0x1A-0x1D，见 seg3:0x0BED 力度路径）；
-  记录 0x05/0x0A/0x0F/0x14 是 key-on 槽位掩码 / LFO 波形 / LFO 起相位 / LFO 速率，不是 TL
-  WOPN 算子顺序 = 寄存器偏移 +0/+4/+8/+C (libOPNMIDI: 0x30 + d*0x10 + op*4)
+  WOPN 算子顺序 = 硬件顺序 1->3->2->4 = 寄存器偏移 +0/+4/+8/+C
   NECOPN 字段顺序 = 槽位偏移 +0/+8/+4/+C (cs:0x142C = [0,8,4,0xC])
 
 用法: py extract_bank.py [NECOPN.DRV路径] [输出目录]
@@ -24,6 +24,10 @@ data = open(IN_PATH, "rb").read()
 BANK = data[0x5510:0x5510 + 0x2000]          # FMPARA/"VoicePara", 128×64B
 OCT = data[0x7510:0x7510 + 0x80]             # FMOCTAVE/"VoiceOctave", 128B
 assert len(BANK) == 0x2000
+
+# WOPN v2 试听时长常量
+KEY_ON_DELAY_MS = 5000
+KEY_OFF_DELAY_MS = 200
 
 GM_NAMES = [
     "Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano",
@@ -56,23 +60,22 @@ GM_NAMES = [
     "Applause", "Gunshot",
 ]
 
+
 def field(rec, logical):
-    """工作区逻辑索引 -> 记录字节 (>0x14 时表内偏移+1, 跳过运行时字段 0x14)"""
     t = logical + (1 if logical > 0x14 else 0)
     return rec[t]
 
-# seg3:0x1239 取反表：这些字段在记录里存的是 (最大值 - 真值)
+
+# seg3:0x1239 取反表：AR/DR/SR 和 TL 存的是 (最大值 - 真值)
+# **SL 和 RR 绝对不在这里（必须保持原值）**
 INVERT_MAX = {}
 for _i in (0x01, 0x02, 0x03, 0x04, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D, 0x0E):
     INVERT_MAX[_i] = 0x1F
-for _i in (0x10, 0x11, 0x12, 0x13, 0x16, 0x17, 0x18, 0x19):
-    INVERT_MAX[_i] = 0x0F
 for _i in (0x1B, 0x1C, 0x1D, 0x1E):
     INVERT_MAX[_i] = 0x7F
 
 
 def field_inv(rec, logical):
-    """逻辑索引 -> 寄存器真值（应用 cs:0x1239 取反表）"""
     t = logical + (1 if logical > 0x14 else 0)
     v = rec[t]
     m = INVERT_MAX.get(t)
@@ -80,14 +83,13 @@ def field_inv(rec, logical):
 
 
 def op_fields(rec):
-    """返回按芯片槽位偏移 +0/+8/+4/+C 排列的 (AR,DR,SR,SL,RR,KS,ML,DT,TL)"""
     out = []
     for k in range(4):                     # k: 寄存器偏移顺序 [0,8,4,C]
         ar = field_inv(rec, 0x01 + k)
         dr = field_inv(rec, 0x06 + k)
         sr = field_inv(rec, 0x0B + k)
-        sl = field_inv(rec, 0x10 + k)
-        rr = field_inv(rec, 0x15 + k)
+        sl = field_inv(rec, 0x10 + k)      # 无取反
+        rr = field_inv(rec, 0x15 + k)      # 无取反
         ks = field(rec, 0x1F + k)
         ml = field(rec, 0x24 + k)
         dt = field(rec, 0x29 + k)
@@ -95,20 +97,23 @@ def op_fields(rec):
         out.append(dict(ar=ar, dr=dr, sr=sr, sl=sl, rr=rr, ks=ks, ml=ml, dt=dt, tl=tl))
     return out
 
-def est_delay(op):
-    """v2 里 delay 全 0 = 空白音色, 用包络估算毫秒 (非零即可, 这里给粗略值)"""
-    on = min(2000, 1 << max(0, 15 - op["ar"]))
-    off = min(10000, 1 << max(0, 15 - op["rr"]))
-    return max(on, 1), max(off, 1)
 
 def parse_rec(n):
     rec = BANK[n * 0x40:(n + 1) * 0x40]
     head = rec[0]
-    pan = (head >> 6) & 3          # 0=center 1=right? 2=left? (OPN RL: bit7=L, bit6=R)
+    pan = (head >> 6) & 3
     fb = (head >> 3) & 7
     alg = head & 7
     ops = op_fields(rec)
     return dict(head=head, pan=pan, fb=fb, alg=alg, ops=ops)
+
+
+def is_blank(voice):
+    for o in voice["ops"]:
+        if o["tl"] < 0x7F:
+            return False
+    return True
+
 
 # ---------- 校验 + 文本 dump ----------
 lines = ["# NECOPN voice dump (128 x 64B @ file 0x5510)",
@@ -135,6 +140,7 @@ if problems:
 else:
     print("OK: 128 条音色字段全部在 OPN 寄存器值域内")
 
+
 # ---------- WOPN v2 输出 ----------
 def u16be(v):
     return struct.pack(">H", v)
@@ -142,71 +148,57 @@ def u16be(v):
 def u16le(v):
     return struct.pack("<H", v)
 
-op_order = [0, 2, 1, 3]        # 驱动字段序 [0,+8,+4,+C] -> 芯片偏移 +0/+4/+8/+C
+op_order = [0, 2, 1, 3]        # 驱动字段序 [0,+8,+4,+C] -> 硬件序 [0,+4,+8,+C]
 
-instrs = b""
-for n in range(128):
-    v = parse_rec(n)
-    name = GM_NAMES[n].encode("ascii")[:31]
+def build_instrument(n, voice=None):
+    if voice is None:
+        voice = parse_rec(n)
+    blank = is_blank(voice)
+
     body = bytearray(69)
-    body[0:32] = name.ljust(32, b"\0")
-    body[32:34] = u16be(0)                     # note_offset
-    body[34] = 0                               # percussion_key_number
-    body[35] = v["head"] & 0x3F                # fbalg = FB<<3|ALG, pan 位清零(居中)
-    body[36] = 0                               # lfosens
-    for w, k in enumerate(op_order):
-        o = v["ops"][k]
-        off = 37 + w * 7
-        body[off + 0] = ((o["dt"] & 7) << 4) | (o["ml"] & 15)          # 0x30 DT/ML
-        body[off + 1] = min(o["tl"], 0x7F)                             # 0x40 TL
-        body[off + 2] = ((o["ks"] & 3) << 6) | (o["ar"] & 31)          # 0x50 KS/AR
-        body[off + 3] = (o["dr"] & 0x7F) | ((o["dr"] & 0x80))          # 0x60 AM/DR
-instrs_v2 = b""
-instrs_v1 = b""
-for n in range(128):
-    v = parse_rec(n)
     name = GM_NAMES[n].encode("ascii")[:31]
-    body = bytearray(65)                       # v1 条目 = 65 字节
     body[0:32] = name.ljust(32, b"\0")
     body[32:34] = u16be(0)                     # note_offset
     body[34] = 0                               # percussion_key_number
-    body[35] = v["head"] & 0x3F                # fbalg = FB<<3|ALG, pan 位清零(居中)
-    body[36] = 0                               # lfosens
+    body[35] = voice["head"] & 0x3F            # fbalg（清 pan 位）
+    body[36] = 0x80 if not blank else 0        # chip type = OPNA
     for w, k in enumerate(op_order):
-        o = v["ops"][k]
+        o = voice["ops"][k]
         off = 37 + w * 7
         body[off + 0] = ((o["dt"] & 7) << 4) | (o["ml"] & 15)          # 0x30 DT/ML
         body[off + 1] = min(o["tl"], 0x7F)                             # 0x40 TL
         body[off + 2] = ((o["ks"] & 3) << 6) | (o["ar"] & 31)          # 0x50 KS/AR
-        body[off + 3] = (o["dr"] & 0x7F) | ((o["dr"] & 0x80))          # 0x60 AM/DR
+        body[off + 3] = (o["dr"] & 0x7F)                               # 0x60 AM/DR
         body[off + 4] = o["sr"] & 31                                   # 0x70 SR
         body[off + 5] = ((o["sl"] & 15) << 4) | (o["rr"] & 15)         # 0x80 SL/RR
         body[off + 6] = 0                                              # 0x90 SSG-EG
-    don, doff = est_delay(v["ops"][0])
-    instrs_v1 += bytes(body)
-    instrs_v2 += bytes(body) + u16be(don) + u16be(doff)
+    if blank:
+        body[65:67] = u16be(0)
+        body[67:69] = u16be(0)
+    else:
+        body[65:67] = u16be(KEY_ON_DELAY_MS)
+        body[67:69] = u16be(KEY_OFF_DELAY_MS)
+    return bytes(body)
 
-def bank(magic, version, lfo_byte, body):
-    out = bytearray()
-    out += magic
-    if version > 1:
-        out += u16le(version)
-    out += u16be(1)                # melodic banks = 1
-    out += u16be(0)                # percussive banks = 0
-    out += bytes([lfo_byte])
-    if version >= 2:
-        out += b"NECOPN GM".ljust(32, b"\0") + bytes([0, 0])   # bank 名 + lsb/msb
-    out += body
-    return bytes(out)
-b2 = bank(b"WOPN2-B2NK\0", 2, 0x10, instrs_v2)
-b1 = bank(b"WOPN2-BANK\0", 1, 0x00, instrs_v1)
-p2 = os.path.join(OUT_DIR, "NECOPN_GM.wopn")
-open(p2, "wb").write(b2)
-print(f"WOPN v2 (推荐): {p2} ({len(b2)} 字节)")
-p1 = os.path.join(OUT_DIR, "NECOPN_GM_v1.wopn")
-open(p1, "wb").write(b1)
-print(f"WOPN v1 (旧库兼容): {p1} ({len(b1)} 字节)")
-fnum = struct.unpack("<12H", data[0x3D60 + 0x14F4:0x3D60 + 0x14F4 + 24])
-print("FNUM 表:", fnum)
-print("时钟验证: FNUM = f*144*2^17/clk, A4=440 ->",
-      round(440 * 144 * (2 ** 17) / 8000000), "(表值 %d, clk=8MHz)" % fnum[9])
+melodic = b"".join(build_instrument(n) for n in range(128))
+
+percussion = b""
+for n in range(128):
+    blank = bytearray(69)
+    blank[0:32] = b"(blank)".ljust(32, b"\0")
+    percussion += bytes(blank)
+
+out = bytearray()
+out += b"WOPN2-B2NK\0"             # magic
+out += u16le(2)                    # version = 2
+out += u16be(1)                    # melodic banks = 1
+out += u16be(1)                    # percussion banks = 1
+out += bytes([0x10])               # LFO freq=0 | chip_type<<4 = OPNA
+out += b"NECOPN GM".ljust(32, b"\0") + bytes([0, 0])
+out += b"(empty)".ljust(32, b"\0") + bytes([0, 0])
+out += melodic
+out += percussion
+
+path = os.path.join(OUT_DIR, "NECOPN_GM.wopn")
+open(path, "wb").write(out)
+print(f"WOPN v2: {path} ({len(out)} 字节)")
