@@ -1,14 +1,16 @@
 # NECOPN.DRV 逆向工程与 Python 渲染器
 
+> **语言**: [[English](README.md) | 简体中文]
+
 本项目是对 NEC PC-9821 (Windows 95) 专属 MIDI 驱动 `NECOPN.DRV` 的一次深度逆向与行为复现尝试。项目通过 Python 结合底层 C++ 核心，实现了一套离线渲染方案，旨在尽可能还原当年实机的听感与声部调度逻辑。
 
-> **🎯 项目状态**：目前在音高、包络、通道分配和鼓组行为上已基本完全复现实机效果（除软件 LFO 特性存在已知限制外）。
+> **🎯 项目状态**：目前在音高、包络、通道分配和鼓组行为上已基本完全复现实机效果。软件 LFO 的明显听感问题（电磁噪音、过度颤动）已经解决，但仍可能存在尚未探明的怪癖，因此默认关闭。
 > 
 > **📦 开箱即用**：仓库已内置逆向提取的硬编码音色库 `fixed_bank.py`，**你不需要原版 `NECOPN.DRV` 即可直接运行播放器。**
 
 ## 🏗️ 复现架构与核心说明
 
-**1. 关于“双核心”的软件映射**
+**1. 关于"双核心"的软件映射**
 PC-98 真实硬件虽然搭载了 YM2608 (OPNA) 芯片，但官方驱动在软件层为了规避芯片特性和干扰，严格限制了单颗芯片只使用 CH0-CH2。因此，本项目在复现时采用了 **2 个核心实例 × 每核 3 个通道（共 6 声部）** 的软件架构，完美映射了原驱动的逻辑，而非硬件物理上的 12 声道。
 
 **2. 为什么从 ymfm 换到了 fmgen？**
@@ -30,22 +32,56 @@ PC-98 真实硬件虽然搭载了 YM2608 (OPNA) 芯片，但官方驱动在软�
 # 渲染为 WAV（无需原版 DRV！）
 python player.py your_song.mid -o output.wav --rhythm-rom ./RHY
 
+# 开启软件 LFO（实验性；可能仍有未探明的怪癖）
+python player.py your_song.mid -o output.wav --rhythm-rom ./RHY --enable-lfo
+
+# 调整 LFO 速率（更慢 / 更快）
+python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 10
+python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
+
 # 导出为 VGM (旁支功能)
 python player.py your_song.mid -o output.vgm --vgm
-🗂️ 关于 necopn_reverse/ (逆向副产品)
-NECOPN_GM.wopn：这是逆向出的 128 个音色的 WOPN 包。请注意，它仅供可视化研究（如用 OPN2-BE 打开），并不参与本项目的实际渲染流程（播放器直接使用 fixed_bank.py）。
+🎛️ LFO 参数调优（进阶）
+软件 LFO 默认关闭。通过 --enable-lfo 开启后，可使用以下参数微调：
+
+参数	默认值	说明
+--lfo-divisor N	7	LFO 推进频率 = 836.5 / N Hz。1 = Timer-A 原始速率（约 16 Hz，"涡轮"感强烈，旧行为）。7 ≈ 119 Hz，对齐 Win95 MIDI 回调频率。10–14 = 更慢更柔和。
+--lfo-rate-scale F	1.0	缩放每个音色的 rate_word。一般优先用 --lfo-divisor；仅在需要针对个别音色调速时使用。
+--lfo-depth-scale F	1.0	缩放 trem 幅度（tremolo 深度）。0.5 减半深度，适用于修复后仍觉得某音色摆动过大的情况。
+--lfo-jitter-us U	6.0	给 Timer-A tick 加入 ±U µs 的均匀抖动。修复后目前没有明显效果，保留作为诊断选项。
+推荐调试路径：先单独用 --enable-lfo（默认 lfo_divisor = 7）试听。如果颤音仍然偏快，改 --lfo-divisor 10；如果偏静态，改 --lfo-divisor 5。只有在个别音色幅度摆动明显过大时才动 --lfo-depth-scale。
+
+🗂️ 生成 WOPN 音色包（逆向副产品）
+你无需原版 .drv 文件，即可直接从硬编码数据生成 .wopn 音色包用于研究：
+
+将 extract_bank.py 与 fixed_bank.py 放在同一个文件夹中。
+
+运行：python extract_bank.py
+
+⚠️ 为什么 WOPN 只是一个“近似产物”？
+NECOPN.DRV 里的原始音色数据是完全为动态驱动服务的。驱动在运行时会通过软件包络实时覆写寄存器（如 RR、D1R、SL）。而 .wopn 是一个静态格式，无法执行这种动态逻辑。
+
+尽管提取脚本已经修复了 RR=0（无限延音）的问题，并计算了正确的移调偏移，但生成的 WOPN 听感（如释放时间过短）仍会与真实驱动有明显差异。该 WOPN 文件仅供可视化研究（如在 OPN2-BE 中查看），不参与 Python 播放器的实际渲染。
 
 ⚠️ 已知限制
-软件 LFO 噪音：当开启 --enable-lfo 参数时，软件 LFO 的高频相位刷新可能会导致音频出现轻微底噪。目前该特性默认关闭以保证听感纯净。
+软件 LFO：此前出现的电磁噪音、过度颤动已修复。LFO 目前功能可用，但默认关闭，因为可能仍存在尚未探明的怪癖。若遇到异常的 vibrato/tremolo 表现，请先尝试通过上面的参数微调，再考虑报告问题。
 
 VGM 导出异常：通过 --vgm 导出的文件在部分严格校验的播放器（如 foobar2000 vgmplay）中可能无法发声。作为旁支辅助功能，目前暂未修复。
 
 🔬 技术细节
-音色解码：直接从驱动读取 64 字节记录，按 cs:0x1239 取反表进行硬件映射。
+音色解码：直接从驱动读取 64 字节记录，按 cs:0x1239 取反表进行硬件映射。已与原始 NECOPN.DRV 逐字节比对验证。
 
 力度与包络：严格遵循 0x0BED 的算子掩码逻辑及硬件 SR/DR 机制。
 
-Timer 节拍：836.5 Hz 的 Timer-A 驱动，处理逻辑精确对齐反汇编指令。
+Timer 节拍：836.5 Hz 的 Timer-A 驱动，处理逻辑精确对齐反汇编指令。包络状态机在此速率上运行。
+
+软件 LFO：
+
+推进频率：约 120 Hz，由 lfo_divisor = 7 分频得到（836.5 / 7）。这与 Win95 MIDI 回调频率相符，而不是 Timer-A 的速率——驱动在每个 MIDI 事件粒度上轮询 irq_poll，所以 LFO 更新频率相对 Timer-A 是分频的。
+
+TL 计算：逐字节对照 seg3:0x0F92-0x0FC8，包括对中间量 t1 的无符号字节处理——这正是旧版"电磁噪音"的根因。
+
+Shape 1/3 相位：计数器使用 eff_counter = lfo_counter // lfo_divisor，确保方波/噪声 LFO 在分频后仍保持正确的频率。
 
 🙏 致谢与声明
 感谢 Wohlstand 在 WOPN 格式和核心对比上的耐心解答。

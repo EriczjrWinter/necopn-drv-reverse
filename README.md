@@ -1,8 +1,10 @@
 # NECOPN.DRV Reverse Engineering & Renderer
 
+> **Language**: [English | [简体中文](README_zh.md)]
+
 This project is a deep reverse engineering and high-fidelity reimplementation of the `NECOPN.DRV` MIDI driver, exclusively used in NEC PC-9821 running Windows 95. By combining Python with a custom C++ core, it aims to reproduce the exact sonic behavior and voice allocation logic of the original hardware.
 
-> **🎯 Status**: Basic complete reproduction of the original hardware (Pitch, Envelope, Voice allocation, and Rhythm) is achieved. (Excluding the software LFO feature, which has known limitations).
+> **🎯 Status**: Basic complete reproduction of the original hardware (Pitch, Envelope, Voice allocation, and Rhythm) is achieved. Software LFO is now functional with all previously audible artifacts (electromagnetic noise, excessive warble) resolved — though undiscovered quirks may remain.
 > 
 > **📦 Out-of-the-box**: A hardcoded `fixed_bank.py` (extracted from the original driver) is included. **You do NOT need the original `NECOPN.DRV` to run the player.**
 
@@ -30,26 +32,60 @@ We initially used `ymfm`. However, during waveform comparisons against real hard
 # Render to WAV (No DRV required!)
 python player.py your_song.mid -o output.wav --rhythm-rom ./RHY
 
+# Enable software LFO (experimental; undiscovered quirks may remain)
+python player.py your_song.mid -o output.wav --rhythm-rom ./RHY --enable-lfo
+
+# Tune LFO rate (slower / faster)
+python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 10
+python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
+
 # Export to VGM (Side feature)
 python player.py your_song.mid -o output.vgm --vgm
-🗂️ About necopn_reverse/ (Byproducts)
-NECOPN_GM.wopn: A byproduct WOPN bank generated from our reverse engineering. NOTE: It is strictly for visual inspection (e.g., in OPN2-BE) and is NOT used by the Python player. The player uses fixed_bank.py.
+🎛️ LFO Tuning (Advanced)
+The software LFO is disabled by default. Once enabled with --enable-lfo, the following parameters are available for fine-tuning:
+
+Parameter	Default	Description
+--lfo-divisor N	7	LFO advance frequency = 836.5 / N Hz. 1 = Timer-A rate (~16 Hz, "warble"-y, old behavior). 7 ≈ 119 Hz, matching the Win95 MIDI callback rate. 10–14 = slower / more subtle.
+--lfo-rate-scale F	1.0	Multiplies rate_word per voice. Prefer --lfo-divisor; use only when a specific voice needs a different LFO rate.
+--lfo-depth-scale F	1.0	Multiplies trem amplitude (tremolo depth). 0.5 halves the depth — useful for patches whose LFO still swings too far after the fixes.
+--lfo-jitter-us U	6.0	Adds uniform ±U µs jitter to Timer-A tick timing. Currently ineffective after the fixes; retained for diagnostic purposes.
+Recommended workflow: Start with --enable-lfo alone (default lfo_divisor = 7). If vibrato/tremolo still sounds too fast, try --lfo-divisor 10; if it feels too static, try --lfo-divisor 5. Only reach for --lfo-depth-scale when a specific voice has excessive amplitude swing.
+
+🗂️ Generating the WOPN Bank (Byproduct)
+You can generate a .wopn bank without the original .DRV file by extracting from the hardcoded data.
+
+Place extract_bank.py and fixed_bank.py in the same folder.
+
+Run: python extract_bank.py
+
+⚠️ Why is the WOPN just an approximation?
+The raw data inside NECOPN.DRV is strictly designed for dynamic driver execution. The driver relies heavily on software envelopes—dynamically overwriting registers (like RR, D1R, SL) in real-time during playback. A static .wopn format completely lacks the ability to execute this dynamic logic.
+
+Although the extraction script patches the RR=0 (infinite sustain) bug and calculates the correct pitch offsets, the resulting WOPN will still sound noticeably different from the real driver (e.g., abnormally short releases). This WOPN file is ONLY for visual inspection (e.g., in OPN2-BE) and is NOT used by the Python player.
 
 ⚠️ Known Issues
-Software LFO Noise: Enabling --enable-lfo may cause slight background noise due to high-frequency phase resets. It is disabled by default for clean audio.
+Software LFO: Previously audible electromagnetic noise and excessive warble have been resolved. The LFO is functionally usable but remains disabled by default because some quirks may yet be undiscovered. If you encounter odd vibrato/tremolo behavior, try tuning via the parameters above before reporting.
 
 VGM Export Issue: Exported .vgm files may fail to play in strict players like foobar2000. This is a side-feature and is currently deprioritized.
 
 🔬 Technical Details
-Voice Decoding: Reads 64-byte records directly from the driver, mapping hardware values via the cs:0x1239 inversion table.
+Voice Decoding: Reads 64-byte records directly from the driver, mapping hardware values via the cs:0x1239 inversion table. Verified byte-for-byte against the original NECOPN.DRV.
 
 Velocity & Envelope: Strictly follows the operator mask logic at 0x0BED and hardware SR/DR mechanisms.
 
-Timer Tick: Driven by the 836.5 Hz Timer-A interrupt, precisely aligned with assembly instructions.
+Timer Tick: Driven by the 836.5 Hz Timer-A interrupt, precisely aligned with assembly instructions. Envelope state machine runs at this rate.
+
+Software LFO:
+
+Advance rate: ~120 Hz, gated by lfo_divisor = 7 (836.5 / 7). This matches the Win95 MIDI callback rate rather than the Timer-A rate — the driver polls irq_poll at MIDI event granularity, so LFO updates decimated relative to Timer-A.
+
+TL calculation: Follows seg3:0x0F92-0x0FC8 byte-for-byte, including the unsigned-byte handling of the intermediate t1 that was the root cause of the old "electromagnetic noise".
+
+Shape 1/3 phase: Counter uses eff_counter = lfo_counter // lfo_divisor so square/noise LFO frequencies are preserved despite the decimation.
 
 🙏 Credits & Disclaimer
 Thanks to Wohlstand for his guidance on WOPN and core comparison.
 
-Thanks to cisc (fmgen), the NP21/W team, and Aaron Giles (ymfm - an excellent emulator framework, swapped only due to differing project priorities).
+Thanks to cisc (fmgen), the NP21/W team, and Aaron Giles (ymfm — an excellent emulator framework, swapped only due to differing project priorities).
 
 This project is for educational and preservation purposes only. All rights belong to NEC and YAMAHA.

@@ -159,12 +159,18 @@ class ChipUnit:
 class NecopnSystem:
     def __init__(self, cores: Sequence[ChipCore],
                  clock: int = 8_000_000, bend_range: int = BEND_RANGE_DEFAULT,
-                 lfo_enabled: bool = False):
+                 lfo_enabled: bool = False,
+                 lfo_divisor: int = 7,
+                 lfo_rate_scale: float = 1.0,
+                 lfo_depth_scale: float = 1.0):
         self.cores = list(cores)
         self.clock = clock
         self.lfo_enabled = lfo_enabled
-        
-        channels_per_core = 3 
+        self.lfo_divisor = max(1, int(lfo_divisor))
+        self.lfo_rate_scale = max(0.01, float(lfo_rate_scale))
+        self.lfo_depth_scale = max(0.0, float(lfo_depth_scale))
+
+        channels_per_core = 3
         self.cpc = channels_per_core
         self.bend_range = bend_range
         self.n_ch = len(self.cores) * self.cpc
@@ -241,7 +247,10 @@ class NecopnSystem:
                     ((voice.dt[i] & 7) << 4) | (voice.ml[i] & 0x0F))
         vs = self.vstates[ch]
         vs.vib_depth = voice.vib_depth
-        vs.trem = list(voice.op_tremolo())
+        trem = voice.op_tremolo()
+        if self.lfo_depth_scale != 1.0:
+            trem = tuple(min(127, int(t * self.lfo_depth_scale)) for t in trem)
+        vs.trem = list(trem)
 
     def set_velocity(self, ch: int, level: int) -> None:
         vs = self.vstates[ch]
@@ -249,19 +258,21 @@ class NecopnSystem:
         alg = voice.head & 7
         atten = 0x7F - (level & 0x7F)
         for i in range(4):
-            base = voice.tl[i]  
+            base = voice.tl[i]
             v = (OPMASK[alg][i] & atten) + base
             vs.tl_base[i] = v & 0xFF
-        self._write_tl(ch, vs.tl_base)
+        self._write_tl(ch, vs.tl_base, force=True)
 
-    def _write_tl(self, ch: int, values: Sequence[int]) -> None:
+    def _write_tl(self, ch: int, values: Sequence[int], force: bool = False) -> None:
+        vs = self.vstates[ch]
+        key = tuple(int(v) & 0x7F for v in values)
+        if not force and getattr(vs, "last_tl", None) == key:
+            return
+        vs.last_tl = key
         u = self.units[ch // self.cpc]
         chip_ch = ch % self.cpc
         for i in range(4):
-            v = values[i]
-            if v >= 0x7F:
-                v = 0x7F
-            self._w(u, 0x40 + SLOT_OFFSET[i] + chip_ch, v)
+            self._w(u, 0x40 + SLOT_OFFSET[i] + chip_ch, key[i])
 
     def current_voice(self, ch: int) -> Voice:
         prog = self.programs[self.slots[ch].midi_ch & 0x0F]
@@ -453,6 +464,12 @@ class NecopnSystem:
         self.global_tick = (self.global_tick + 1) & 0xFFFF
         if not self.lfo_enabled:
             return
+
+        # 实机 LFO 推进由 Win95 MIDI 回调驱动（~120 Hz），不是 Timer-A（836.5 Hz）。
+        # lfo_divisor=7 把两者对齐（836.5 / 7 ≈ 120）。
+        # 包络状态机仍在每个 tick（836.5 Hz）推进，只有 LFO 步进被分频。
+        do_lfo = (self.global_tick % self.lfo_divisor) == 0
+
         for ch in range(self.n_ch):
             vs = self.vstates[ch]
             if not vs.started:
@@ -464,6 +481,7 @@ class NecopnSystem:
             if voice.rate_word == 0:
                 vs.env_state = 3
                 continue
+
             st = vs.env_state & 3
             if st == 0:
                 vs.lfo_counter = (vs.lfo_counter + 1) & 0xFFFF
@@ -472,7 +490,7 @@ class NecopnSystem:
                 vs.env_state = (vs.env_state & ~3) | 1
                 if voice.rate_a == 1:
                     vs.lfo_counter = 0
-                    vs.lfo_value = 0
+                    vs.lfo_value = 0x7FFF if voice.shape == 4 else 0
                     vs.lfo_dir = -1 if voice.shape == 4 else 1
                     vs.env_state = (vs.env_state & ~3) | 2
                 elif voice.rate_a == 0:
@@ -480,7 +498,7 @@ class NecopnSystem:
                     vs.lfo_value = self.global_tick
                     vs.env_state = (vs.env_state & ~3) | 2
                 else:
-                    vs.lfo_counter = ((voice.rate_a - 1) * 4 + 1) & 0xFFFF
+                    vs.lfo_counter = ((voice.rate_a - 1) * 4) & 0xFFFF
                     continue
             elif st == 1:
                 vs.lfo_counter = (vs.lfo_counter - 1) & 0xFF
@@ -491,23 +509,33 @@ class NecopnSystem:
                     vs.env_state = (vs.env_state & ~3) | 2
                 else:
                     continue
-            self._lfo_step(ch, voice, vs)
+
+            if do_lfo:
+                self._lfo_step(ch, voice, vs)
+
             vs.lfo_counter = (vs.lfo_counter + 1) & 0xFFFF
 
     def _lfo_step(self, ch: int, voice: Voice, vs: VoiceState) -> None:
-        period = 0xFFFF // max(1, voice.rate_word)
+        rate_word = max(1, int(voice.rate_word * self.lfo_rate_scale))
+        period = 0xFFFF // rate_word
         shape = voice.shape
         overflow = False
+
+        # 等效 tick：lfo_counter 每 836.5 Hz tick +1，但本函数每 120 Hz 才跑一次。
+        # shape 1/3 的相位判定依赖“LFO 步数”，除以 lfo_divisor 才能保持
+        # 与原反汇编（836.5 Hz 上下文）一致的方波/噪声频率。
+        eff_counter = vs.lfo_counter // self.lfo_divisor
+
         if shape == 1:
-            phase = (vs.lfo_counter // max(1, period)) & 1
+            phase = (eff_counter // max(1, period)) & 1
             vs.lfo_value = 0x7FFF if phase == 0 else (-32768 & 0xFFFF)
         elif shape == 3:
             step = period | 1
-            if (vs.lfo_counter % step) == 0:
+            if (eff_counter % step) == 0:
                 vs.random_state = (vs.random_state * 0x383) % 0x7FFF
             vs.lfo_value = vs.random_state
         else:
-            step = voice.rate_word * vs.lfo_dir
+            step = rate_word * vs.lfo_dir
             old = vs.lfo_value
             new = (old + step) & 0xFFFF
             if ((old ^ new) & 0x8000) != 0:
@@ -521,6 +549,7 @@ class NecopnSystem:
             elif shape in (4, 5):
                 if self._s16(vs.lfo_value) < 0:
                     vs.lfo_value = 0
+
         word = vs.fnum_word
         fnum = word & 0x7FF
         if vs.vib_depth:
@@ -532,20 +561,20 @@ class NecopnSystem:
             if getattr(vs, 'last_fnum_written', -1) != fnum:
                 self._write_fnum(ch, (word & 0xF800) | fnum, update_state=False)
                 vs.last_fnum_written = fnum
+
+        # --- TL 计算：严格对照 tl_write seg3:0x0F92-0x0FC8 ---
         out = []
         lfo = self._s16(vs.lfo_value)
         for i in range(4):
             b = vs.tl_base[i] & 0xFF
-            t1 = (vs.trem[i] * lfo) // 0x7FFF
+            prod = vs.trem[i] * lfo
+            t1 = prod // 0x7FFF if prod >= 0 else -((-prod) // 0x7FFF)
             t1 &= 0xFF
-            if t1 >= 128:
-                t1 -= 256
             t2 = (t1 * b) // 0x7F
-            t2 &= 0xFF
             s = t2 + b
             if s > 0xFF:
                 s = 0
-            if s > 0x7F:
+            elif s > 0x7F:
                 s = 0x7F
             out.append(s)
         self._write_tl(ch, out)
