@@ -62,15 +62,29 @@ The Bug: The YM2608 envelope generator has a "Slow-Tier" for low Sustain Rates (
 The Solution: The backend core was completely swapped from ymfm to fmgen (ported from NP21/W), successfully restoring the sustained notes and achieving a 1:1 hardware match.
 
 6. Software Envelope & LFO (seg3:0x0D59)
-Timer-A: Configured at 0x0E3, ticking at ~836.5 Hz. This drives the software state machine and LFO.
+Timer-A: Configured at 0x0E3, ticking at ~836.5 Hz. Drives the envelope state machine.
 
-LFO Implementation: Modulates both Pitch (FNUM) and Total Level (TL). The phase and step logic are fully replicated.
+Actual Upper Bound of LFO Rate: `irq_poll` (seg3:0x0D27) is not an interrupt service routine but a **polling function** placed directly below the `MODMESSAGE` label. Each invocation checks a YM2608 status bit and only acknowledges + updates LFO if Timer-A has overflowed. Therefore the actual LFO advance rate equals the `MODMESSAGE` callback frequency, not the Timer-A tick. Under Win95's `midiStreamOut` this callback typically sits around ~120 Hz (80-150 Hz range), meaning most Timer-A overflows are dropped.
 
-Known Issue (Phase Resets): In software emulators, writing to the FNUM registers at 836Hz causes internal phase discontinuity, resulting in a slight background noise (the "electric buzz"). Since the original hardware relies on physical CPU timing and IO wait-states (which smooth out these updates), this behavior is inherently difficult to replicate purely in synchronous Python. The LFO is therefore disabled by default in the Python player to ensure clean audio.
+`rate_word` was calibrated against 836.5 Hz: In the disassembly, `rate_word = record[0x14..15]` is multiplied directly into the accumulator with no intermediate division. This implies voice designers assumed "the driver provides an 836.5 Hz clock", while the actual callback frequency is far below that. **The discrepancy between design intent and real hardware behavior is a historical artifact of Win16 driver scheduling, not a bug.** The equivalent reproduction is to divide the LFO advance rate by 7 (`836.5 / 7 ≈ 119 Hz`), corresponding to the Python-side `--lfo-divisor 7` (default value).
+
+True Root Cause of the Electromagnetic Noise (not phase reset): The previous explanation — that high-frequency FNUM writes cause phase discontinuity — is incorrect. `Operator::SetFNum` only sets `dp_`/`bn_` and marks `param_changed_`; `pg_count_` is cleared only by `KeyOn()`, not by `SetFNum`. The real root cause lies in the TL calculation at `seg3:0x0F92-0x0FC8`:
+- After `idiv 0x7FFF`, the quotient byte is used as an **unsigned 0-255** value thanks to `xor ah, ah`
+- When `t1` is negative (`lfo < 0` and `trem > 0`), its low byte falls in 0x80-0xFF, which assembly treats as a large positive 241-255
+- The old Python code incorrectly did `if t1 >= 128: t1 -= 256`, converting back to signed, which made `t2 = (t1 * b) // 0x7F` negative
+- `t2 &= 0xFF` followed by `s = t2 + b > 0xFF` triggers `s = 0` — TL jumps to maximum loudness (0 = loudest)
+- Heard as "electromagnetic noise"; when the target is a carrier, it manifests as volume spikes
+
+Fix: `_lfo_step`'s TL calculation now matches `0x0F92-0x0FC8` byte-for-byte, including the unsigned handling of `t1`, the positive-result path of `idiv 0x7F`, and the `s > 0xFF → 0` overflow check.
+
+Shape 1/3 Phase Correction: The phase decision for square/noise LFO depends on `lfo_counter`, but this counter increments at 836.5 Hz while `_lfo_step` only executes at 120 Hz. Using it directly multiplies the square/noise frequency by 7. The fix uses `eff_counter = lfo_counter // lfo_divisor`, applied only in the shape 1/3 branches, leaving shape 0/2/4/5 unaffected.
 
 7. Known Unsolved / Limitations
 VGM Export: The multi-chip VGM stream separation has header compatibility issues with strict players (e.g., foobar2000 vgmplay).
 
-Software LFO Noise: As mentioned above, disabled by default due to phase reset artifacts in FM synthesis cores.
+Software LFO: The previously audible electromagnetic noise and excessive warble have been resolved (root cause detailed in Section 6). However, several details remain unverified, so it is disabled by default:
+- The `rate_a` start-delay semantics for the envelope state machine are unverified (836.5 Hz vs 120 Hz baseline); the current implementation follows 836.5 Hz
+- The `lfo_value < 0` clamp for shape 4/5 has not been byte-verified against the disassembly at `0x1060`
+- The default `--lfo-divisor 7` comes from a reasonable estimate of "Win95 MIDI callback ≈ 120 Hz", not from a value directly confirmed in the disassembly. Users can tune between `--lfo-divisor 5` and `14` to align with their own hardware recording
 
 MYFAIRLADY API: The extended private API (0x64-0x67 messages) was not deeply expanded, as it is unrelated to standard MIDI playback.
