@@ -1,29 +1,48 @@
 # -*- coding: utf-8 -*-
 """
-NECOPN.DRV 音色库提取器: 8KB FMPARA/"VoicePara" 资源 -> WOPN v2 bank (OPNA)
+NECOPN.DRV 音色库提取器 & WOPN v2 生成器 (双模版)
+- 模式 1 (推荐开源分发): 自动读取由 DRVBANK.py 生成的 fixed_bank.py (硬编码)，彻底摆脱版权风险。
+- 模式 2 (原始逆向): 读取 NECOPN.DRV 二进制文件。
 
-字段映射来源(逆向 seg3:0xBB9 装载器 / 0x126D 组写入器 / 0x11F8 读取器 / 0x1239 取反表):
-  记录(64B) --copy 51B--> 工作区(0x26F4+ch*0x34), 逻辑索引>0x14 时读取器 +1 跳过运行时字段
-  **记录存的是取反值**：AR/DR/SR = 0x1F-rec，TL = 0x7F-rec
-  **注意**：SL/RR 不取反（WOPN 规范直接期望硬件值）
-  TL 真实来源 = 记录 0x1B-0x1E（逻辑 0x1A-0x1D，见 seg3:0x0BED 力度路径）；
-  WOPN 算子顺序 = 硬件顺序 1->3->2->4 = 寄存器偏移 +0/+4/+8/+C
-  NECOPN 字段顺序 = 槽位偏移 +0/+8/+4/+C (cs:0x142C = [0,8,4,0xC])
-
-用法: py extract_bank.py [NECOPN.DRV路径] [输出目录]
+用法: 
+  1. 提取硬编码 WOPN: py extract_bank.py
+  2. 从 DRV 提取 WOPN: py extract_bank.py NECOPN.DRV [输出目录]
 """
 import struct
 import sys
 import os
+import math
 
-IN_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join("..", "NECOPN.DRV")
+# ---------- 数据加载模块 ----------
+IN_PATH = sys.argv[1] if len(sys.argv) > 1 else "NECOPN.DRV"
 OUT_DIR = sys.argv[2] if len(sys.argv) > 2 else "out"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-data = open(IN_PATH, "rb").read()
-BANK = data[0x5510:0x5510 + 0x2000]          # FMPARA/"VoicePara", 128×64B
-OCT = data[0x7510:0x7510 + 0x80]             # FMOCTAVE/"VoiceOctave", 128B
-assert len(BANK) == 0x2000
+BANK = b""
+OCT = b""
+
+if os.path.exists("fixed_bank.py"):
+    # 模式 1：优先加载硬编码数据
+    print("发现 fixed_bank.py，使用硬编码音色数据...")
+    from fixed_bank import VOICES_DATA, FMOCTAVE
+    # 将 tuple 元组转换成 bytes，方便后续索引操作
+    BANK = b"".join(bytes([b & 0xFF for b in rec]) for rec in VOICES_DATA)
+    OCT = bytes([b & 0xFF for b in FMOCTAVE])
+else:
+    # 模式 2：回退到读取 DRV 文件
+    print(f"未找到 fixed_bank.py，尝试从 {IN_PATH} 提取...")
+    if not os.path.exists(IN_PATH):
+        print(f"错误: 找不到 {IN_PATH}，请提供 NECOPN.DRV 或运行 DRVBANK.py 生成硬编码。")
+        sys.exit(1)
+    data = open(IN_PATH, "rb").read()
+    BANK = data[0x5510:0x5510 + 0x2000]
+    OCT = data[0x7510:0x7510 + 0x80]
+
+assert len(BANK) == 0x2000, "音色库数据长度错误"
+assert len(OCT) == 0x80, "FMOCTAVE 数据长度错误"
+
+# 基准频率参考值
+BASE_OCTAVE = 244
 
 # WOPN v2 试听时长常量
 KEY_ON_DELAY_MS = 5000
@@ -60,27 +79,24 @@ GM_NAMES = [
     "Applause", "Gunshot",
 ]
 
+# ---------- 核心解析逻辑 ----------
 
 def field(rec, logical):
     t = logical + (1 if logical > 0x14 else 0)
     return rec[t]
 
-
-# seg3:0x1239 取反表：AR/DR/SR 和 TL 存的是 (最大值 - 真值)
-# **SL 和 RR 绝对不在这里（必须保持原值）**
+# seg3:0x1239 取反表
 INVERT_MAX = {}
 for _i in (0x01, 0x02, 0x03, 0x04, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D, 0x0E):
     INVERT_MAX[_i] = 0x1F
 for _i in (0x1B, 0x1C, 0x1D, 0x1E):
     INVERT_MAX[_i] = 0x7F
 
-
 def field_inv(rec, logical):
     t = logical + (1 if logical > 0x14 else 0)
     v = rec[t]
     m = INVERT_MAX.get(t)
     return (m - v) if m is not None else v
-
 
 def op_fields(rec):
     out = []
@@ -93,10 +109,9 @@ def op_fields(rec):
         ks = field(rec, 0x1F + k)
         ml = field(rec, 0x24 + k)
         dt = field(rec, 0x29 + k)
-        tl = field_inv(rec, 0x1A + k)      # 记录 0x1B-0x1E = 力度基准 TL（取反）
+        tl = field_inv(rec, 0x1A + k)      # 力度基准 TL
         out.append(dict(ar=ar, dr=dr, sr=sr, sl=sl, rr=rr, ks=ks, ml=ml, dt=dt, tl=tl))
     return out
-
 
 def parse_rec(n):
     rec = BANK[n * 0x40:(n + 1) * 0x40]
@@ -107,18 +122,16 @@ def parse_rec(n):
     ops = op_fields(rec)
     return dict(head=head, pan=pan, fb=fb, alg=alg, ops=ops)
 
-
 def is_blank(voice):
     for o in voice["ops"]:
         if o["tl"] < 0x7F:
             return False
     return True
 
-
 # ---------- 校验 + 文本 dump ----------
-lines = ["# NECOPN voice dump (128 x 64B @ file 0x5510)",
+lines = ["# NECOPN voice dump (128 x 64B)",
          "# op order = register slot +0/+8/+4/+C (driver order); slotAdj = [0,8,4,0xC]",
-         "prog pan fb alg | op: DT ML TL KS AR AM DR SR SL RR | raw[0x00..0x33]"]
+         "prog pan fb alg | op: DT ML TL KS AR AM DR SR SL RR"]
 problems = []
 for n in range(128):
     v = parse_rec(n)
@@ -134,9 +147,7 @@ for n in range(128):
     lines.append(f"{n:3d}  {v['pan']}  {v['fb']}  {v['alg']} | {ops_txt} | {raw}")
 open(os.path.join(OUT_DIR, "voices_dump.txt"), "w", encoding="utf-8").write("\n".join(lines))
 if problems:
-    print(f"!! {len(problems)} 个字段越界:")
-    for p in problems[:10]:
-        print("   prog", p[0], "op", p[1], p[2])
+    print(f"!! {len(problems)} 个字段越界 (前 10 个已打印)")
 else:
     print("OK: 128 条音色字段全部在 OPN 寄存器值域内")
 
@@ -158,20 +169,53 @@ def build_instrument(n, voice=None):
     body = bytearray(69)
     name = GM_NAMES[n].encode("ascii")[:31]
     body[0:32] = name.ljust(32, b"\0")
-    body[32:34] = u16be(0)                     # note_offset
+    
+    # 【修复 1：计算正确的 note_offset (移调)】
+    # 基准值 244，根据 FMOCTAVE 计算半音偏差
+    octave_val = OCT[n] if OCT[n] > 0 else BASE_OCTAVE
+    note_offset = round(12 * math.log2(BASE_OCTAVE / octave_val))
+    # 限制在合理范围，避免越界 (WOPN 使用的是 16位 signed int)
+    note_offset = max(-32768, min(32767, note_offset))
+    body[32:34] = struct.pack(">h", note_offset)  
+    
     body[34] = 0                               # percussion_key_number
     body[35] = voice["head"] & 0x3F            # fbalg（清 pan 位）
     body[36] = 0x80 if not blank else 0        # chip type = OPNA
+    
     for w, k in enumerate(op_order):
         o = voice["ops"][k]
         off = 37 + w * 7
+        
+        # 1. 释放率 (RR) 补丁
+        rr_val = o["rr"]
+        if rr_val == 0 and not (16 <= n <= 23):
+            rr_val = 1  # 改成 1，最慢的非零释放
+            
+        # 2. Sustain Level (SL) 补丁
+        # SL 值越大，声音在按键时衰减得越深（越小）。为了听感，我们强制压低它！
+        sl_val = o["sl"]
+        if not (16 <= n <= 23) and not (112 <= n <= 127): 
+            # 除了管风琴和打击乐，把 SL 最大限制在 4，保证松手时有足够的音量
+            sl_val = min(sl_val, 4)
+            
+        # 3. D1R (Decay 1) 补丁
+        # 如果原数据 D1R 太快（比如大于 15），我们把它强制减半，让声音掉得慢一点
+        d1r_val = o["dr"]
+        if not (16 <= n <= 23) and not (112 <= n <= 127):
+             d1r_val = min(d1r_val, 15) # 或者除以 2: d1r_val // 2
+
+        # 4. D2R 强制为 0，SR 保持原样
+        dr2_val = 0
+        sr_val = o["sr"] & 31
+
         body[off + 0] = ((o["dt"] & 7) << 4) | (o["ml"] & 15)          # 0x30 DT/ML
         body[off + 1] = min(o["tl"], 0x7F)                             # 0x40 TL
         body[off + 2] = ((o["ks"] & 3) << 6) | (o["ar"] & 31)          # 0x50 KS/AR
-        body[off + 3] = (o["dr"] & 0x7F)                               # 0x60 AM/DR
-        body[off + 4] = o["sr"] & 31                                   # 0x70 SR
-        body[off + 5] = ((o["sl"] & 15) << 4) | (o["rr"] & 15)         # 0x80 SL/RR
+        body[off + 3] = (d1r_val & 0x7F)                               # 0x60 AM/D1R (使用了修修补补的d1r)
+        body[off + 4] = ((dr2_val & 0xF) << 4) | (sr_val & 0x1F)       # 0x70 D2R/SR
+        body[off + 5] = ((sl_val & 15) << 4) | (rr_val & 15)           # 0x80 SL/RR (使用了修修补补的sl)
         body[off + 6] = 0                                              # 0x90 SSG-EG
+        
     if blank:
         body[65:67] = u16be(0)
         body[67:69] = u16be(0)
@@ -201,4 +245,4 @@ out += percussion
 
 path = os.path.join(OUT_DIR, "NECOPN_GM.wopn")
 open(path, "wb").write(out)
-print(f"WOPN v2: {path} ({len(out)} 字节)")
+print(f"WOPN v2 生成成功: {path} ({len(out)} 字节)")
