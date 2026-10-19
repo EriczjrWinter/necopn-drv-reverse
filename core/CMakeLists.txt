@@ -13,7 +13,7 @@ create a 'build' sub-directory, and run 'cmake ..' from it."
 )
 endif()
 
-add_library(necopna_fmgen SHARED
+add_library(necopna_fmgen MODULE
     necopna_fmgen.cpp
     fmgen/fmgen_file.cpp
     fmgen/fmgen_fmgen.cpp
