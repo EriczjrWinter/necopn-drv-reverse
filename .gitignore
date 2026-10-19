@@ -1,0 +1,7 @@
+*.wav
+/core/build/
+__pycache__
+/RHY/
+CMakeCache.txt
+/core/CMakeFiles/
+/core/Makefile
