@@ -51,17 +51,18 @@ Parameter	Default	Description
 --lfo-jitter-us U	6.0	Adds uniform ±U µs jitter to Timer-A tick timing. Currently ineffective after the fixes; retained for diagnostic purposes.
 Recommended workflow: Start with --enable-lfo alone (default lfo_divisor = 7). If vibrato/tremolo still sounds too fast, try --lfo-divisor 10; if it feels too static, try --lfo-divisor 5. Only reach for --lfo-depth-scale when a specific voice has excessive amplitude swing.
 
-🗂️ Generating the WOPN Bank (Byproduct)
-You can generate a .wopn bank without the original .DRV file by extracting from the hardcoded data.
+🗂️ WOPN Banks (Byproducts)
+In the folder, you can find two WOPN files:
+
+NECOPN_GM-fixed.wopn: [Recommended for libOPNMIDI] A heavily tweaked version modified by Wohlstand. He manually adjusted the decay rates and added a percussion kit to make it playable and pleasant in libOPNMIDI. (Note: Because a static WOPN lacks the driver's dynamic envelope logic, it will still sound different from the Python renderer).
+
+NECOPN_GM.wopn: The raw byproduct generated directly by extract_bank.py from the original hardcoded data. It is strictly for visual inspection (e.g., in OPN2-BE) and is NOT recommended for direct playback due to static format limitations (e.g., infinite sustain bugs).
+
+You can also generate the raw WOPN yourself without the .DRV:
 
 Place extract_bank.py and fixed_bank.py in the same folder.
 
 Run: python extract_bank.py
-
-⚠️ Why is the WOPN just an approximation?
-The raw data inside NECOPN.DRV is strictly designed for dynamic driver execution. The driver relies heavily on software envelopes—dynamically overwriting registers (like RR, D1R, SL) in real-time during playback. A static .wopn format completely lacks the ability to execute this dynamic logic.
-
-Although the extraction script patches the RR=0 (infinite sustain) bug and calculates the correct pitch offsets, the resulting WOPN will still sound noticeably different from the real driver (e.g., abnormally short releases). This WOPN file is ONLY for visual inspection (e.g., in OPN2-BE) and is NOT used by the Python player.
 
 ⚠️ Known Issues
 Software LFO: Previously audible electromagnetic noise and excessive warble have been resolved. The LFO is functionally usable but remains disabled by default because some quirks may yet be undiscovered. If you encounter odd vibrato/tremolo behavior, try tuning via the parameters above before reporting.
@@ -84,8 +85,8 @@ TL calculation: Follows seg3:0x0F92-0x0FC8 byte-for-byte, including the unsigned
 Shape 1/3 phase: Counter uses eff_counter = lfo_counter // lfo_divisor so square/noise LFO frequencies are preserved despite the decimation.
 
 🙏 Credits & Disclaimer
-Thanks to Wohlstand for his guidance on WOPN and core comparison.
+Massive thanks to Wohlstand for his guidance on WOPN, core comparison, manual WOPN bank tuning, and the cross-platform CMake/Linux build fixes.
 
-Thanks to cisc (fmgen), the NP21/W team, and Aaron Giles (ymfm — an excellent emulator framework, swapped only due to differing project priorities).
+Thanks to cisc (fmgen), the NP21/W team, and Aaron Giles (ymfm).
 
 This project is for educational and preservation purposes only. All rights belong to NEC and YAMAHA.

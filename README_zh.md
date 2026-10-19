@@ -51,17 +51,18 @@ python player.py your_song.mid -o output.vgm --vgm
 --lfo-jitter-us U	6.0	给 Timer-A tick 加入 ±U µs 的均匀抖动。修复后目前没有明显效果，保留作为诊断选项。
 推荐调试路径：先单独用 --enable-lfo（默认 lfo_divisor = 7）试听。如果颤音仍然偏快，改 --lfo-divisor 10；如果偏静态，改 --lfo-divisor 5。只有在个别音色幅度摆动明显过大时才动 --lfo-depth-scale。
 
-🗂️ 生成 WOPN 音色包（逆向副产品）
-你无需原版 .drv 文件，即可直接从硬编码数据生成 .wopn 音色包用于研究：
+🗂️ WOPN 音色包（逆向副产品）
+在文件夹中，你可以找到两个 WOPN 文件：
+
+NECOPN_GM-fixed.wopn：[推荐用于 libOPNMIDI] 这是一个由 Wohlstand 亲自进行修复与调优的版本。他手动调整了包络的衰减率（Decay），并添加了打击乐鼓组，使其在 libOPNMIDI 中听起来更自然、更好听。（注：由于静态 WOPN 无法执行驱动的动态包络逻辑，其效果仍会与 Python 渲染器存在一定区别）。
+
+NECOPN_GM.wopn：这是由 extract_bank.py 基于原始驱动数据（或硬编码表）直接提取的原始 WOPN。由于静态格式的限制（如无法处理 RR=0），它仅供可视化参考（例如在 OPN2-BE 中查看），不推荐用于直接播放。
+
+你无需原版 .drv 文件，即可自己生成原始 WOPN：
 
 将 extract_bank.py 与 fixed_bank.py 放在同一个文件夹中。
 
 运行：python extract_bank.py
-
-⚠️ 为什么 WOPN 只是一个“近似产物”？
-NECOPN.DRV 里的原始音色数据是完全为动态驱动服务的。驱动在运行时会通过软件包络实时覆写寄存器（如 RR、D1R、SL）。而 .wopn 是一个静态格式，无法执行这种动态逻辑。
-
-尽管提取脚本已经修复了 RR=0（无限延音）的问题，并计算了正确的移调偏移，但生成的 WOPN 听感（如释放时间过短）仍会与真实驱动有明显差异。该 WOPN 文件仅供可视化研究（如在 OPN2-BE 中查看），不参与 Python 播放器的实际渲染。
 
 ⚠️ 已知限制
 软件 LFO：此前出现的电磁噪音、过度颤动已修复。LFO 目前功能可用，但默认关闭，因为可能仍存在尚未探明的怪癖。若遇到异常的 vibrato/tremolo 表现，请先尝试通过上面的参数微调，再考虑报告问题。
@@ -84,10 +85,10 @@ TL 计算：逐字节对照 seg3:0x0F92-0x0FC8，包括对中间量 t1 的无符
 Shape 1/3 相位：计数器使用 eff_counter = lfo_counter // lfo_divisor，确保方波/噪声 LFO 在分频后仍保持正确的频率。
 
 🙏 致谢与声明
-感谢 Wohlstand 在 WOPN 格式和核心对比上的耐心解答。
+特别感谢 Wohlstand 在 WOPN 格式和核心对比上的耐心解答，亲自进行 WOPN 音色库调优，以及提供跨平台 CMake/Linux 构建的代码修复。
 
 感谢 cisc 编写的经典 fmgen 核心，以及 NP21/W 团队 的现代接口维护。
 
-感谢 Aaron Giles 提供的 ymfm 框架（一个非常出色的模拟器库，仅因个人项目需求侧重点不同而更换）。
+感谢 Aaron Giles 提供的 ymfm 框架。
 
 本项目仅供个人学习、复古技术研究与交流，所有原厂硬件与软件的版权归 NEC 及 YAMAHA 所有。
