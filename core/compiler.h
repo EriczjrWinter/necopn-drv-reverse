@@ -2,9 +2,6 @@
 #pragma once
 
 #define SUPPORT_FMGEN 1
-#ifndef _WIN32
-#define _WIN32
-#endif
 
 /* 预定义 fmgen_types.h 守卫 -> 它整段 #if 被跳过，不再重复 typedef / #define __stdcall */
 #define win32_types_h
@@ -60,4 +57,8 @@ typedef int           BOOL;
 #if defined(_MSC_VER) && _MSC_VER < 1900
 #define snprintf  _snprintf
 #define vsnprintf _vsnprintf
+#endif
+
+#ifndef _WIN32
+#   define __stdcall
 #endif

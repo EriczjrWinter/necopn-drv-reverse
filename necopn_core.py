@@ -18,11 +18,17 @@ from __future__ import annotations
 import ctypes
 import os
 import struct
+import platform
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple, Union
 
+necopna_lib = "necopna_fmgen.dll"
+
+if platform.system() == "Linux":
+    necopna_lib = "libnecopna_fmgen_linux_x86_64.so"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DLL = os.path.join(HERE, "core", "necopna_fmgen.dll")
+DEFAULT_DLL = os.path.join(HERE, "core", necopna_lib)
 
 
 def load_rhythm_rom(source: Union[str, bytes, bytearray]) -> bytes:

@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """NECOPN 播放器 CLI —— MIDI -> WAV / VGM / 寄存器 trace。
 

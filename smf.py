@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """标准 MIDI 文件（SMF type 0/1/2）解析 —— 只取播放需要的部分。
 
