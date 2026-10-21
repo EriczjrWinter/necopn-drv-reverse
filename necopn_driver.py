@@ -186,6 +186,7 @@ class NecopnSystem:
         self.fmoctave = [0] * 128
         self.trace: Optional[List[Tuple[float, int, int, int]]] = None
         self.time = 0.0
+        self.random_state = 0  # <--- 新增：全局 LFSR 状态
         self._init_hardware()
 
     def load_bank(self, voices: Sequence[Voice], fmoctave: Sequence[int]) -> None:
@@ -498,7 +499,8 @@ class NecopnSystem:
                     vs.lfo_value = self.global_tick
                     vs.env_state = (vs.env_state & ~3) | 2
                 else:
-                    vs.lfo_counter = ((voice.rate_a - 1) * 4) & 0xFFFF
+                    # 修正 1：实机在计算完后会跳到 loc_206B 执行 inc word ptr [bx+19h]
+                    vs.lfo_counter = ((voice.rate_a - 1) * 4 + 1) & 0xFFFF
                     continue
             elif st == 1:
                 vs.lfo_counter = (vs.lfo_counter - 1) & 0xFF
@@ -522,8 +524,7 @@ class NecopnSystem:
         overflow = False
 
         # 等效 tick：lfo_counter 每 836.5 Hz tick +1，但本函数每 120 Hz 才跑一次。
-        # shape 1/3 的相位判定依赖“LFO 步数”，除以 lfo_divisor 才能保持
-        # 与原反汇编（836.5 Hz 上下文）一致的方波/噪声频率。
+        # 为了让方波/噪声的相位分频与实机（836.5 Hz 上下文）一致，这里除以 lfo_divisor。
         eff_counter = vs.lfo_counter // self.lfo_divisor
 
         if shape == 1:
@@ -532,8 +533,9 @@ class NecopnSystem:
         elif shape == 3:
             step = period | 1
             if (eff_counter % step) == 0:
-                vs.random_state = (vs.random_state * 0x383) % 0x7FFF
-            vs.lfo_value = vs.random_state
+                # 修正 3：使用系统级全局随机状态，而不是 per-channel
+                self.random_state = (self.random_state * 0x383) % 0x7FFF
+            vs.lfo_value = self.random_state
         else:
             step = rate_word * vs.lfo_dir
             old = vs.lfo_value
@@ -542,13 +544,16 @@ class NecopnSystem:
                 overflow = True
             else:
                 vs.lfo_value = new
+            
+            # 修正 2：严格区分 shape 4 和 shape 5
             if shape == 2 and overflow:
                 vs.lfo_dir = -vs.lfo_dir
             elif shape == 0 and overflow:
                 vs.lfo_value = (-vs.lfo_value) & 0xFFFF
-            elif shape in (4, 5):
+            elif shape == 4:  # 实机 shape 4 才有裁掉负值的逻辑
                 if self._s16(vs.lfo_value) < 0:
                     vs.lfo_value = 0
+            # shape 5 什么都不做，允许负值通过（实机完全透明）
 
         word = vs.fnum_word
         fnum = word & 0x7FF
