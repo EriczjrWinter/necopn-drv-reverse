@@ -28,65 +28,65 @@ We initially used `ymfm`. However, during waveform comparisons against real hard
 
 ## 🚀 Quick Start
 
+### Render to WAV (No DRV required!)
 ```bash
-# Render to WAV (No DRV required!)
 python player.py your_song.mid -o output.wav --rhythm-rom ./RHY
+```
 
-# Enable software LFO (experimental; undiscovered quirks may remain)
+### Enable software LFO (experimental; undiscovered quirks may remain)
+```bash
 python player.py your_song.mid -o output.wav --rhythm-rom ./RHY --enable-lfo
+```
 
-# Tune LFO rate (slower / faster)
+### Tune LFO rate (slower / faster)
+```bash
 python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 10
 python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
+```
 
-# Export to VGM (Side feature)
+### Export to VGM (Side feature)
+```bash
 python player.py your_song.mid -o output.vgm --vgm
-🎛️ LFO Tuning (Advanced)
+```
+
+### 🎛️ LFO Tuning (Advanced)
 The software LFO is disabled by default. Once enabled with --enable-lfo, the following parameters are available for fine-tuning:
 
-Parameter	Default	Description
---lfo-divisor N	7	LFO advance frequency = 836.5 / N Hz. 1 = Timer-A rate (~16 Hz, "warble"-y, old behavior). 7 ≈ 119 Hz, matching the Win95 MIDI callback rate. 10–14 = slower / more subtle.
---lfo-rate-scale F	1.0	Multiplies rate_word per voice. Prefer --lfo-divisor; use only when a specific voice needs a different LFO rate.
---lfo-depth-scale F	1.0	Multiplies trem amplitude (tremolo depth). 0.5 halves the depth — useful for patches whose LFO still swings too far after the fixes.
---lfo-jitter-us U	6.0	Adds uniform ±U µs jitter to Timer-A tick timing. Currently ineffective after the fixes; retained for diagnostic purposes.
-Recommended workflow: Start with --enable-lfo alone (default lfo_divisor = 7). If vibrato/tremolo still sounds too fast, try --lfo-divisor 10; if it feels too static, try --lfo-divisor 5. Only reach for --lfo-depth-scale when a specific voice has excessive amplitude swing.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--lfo-divisor N` | 7 | LFO advance frequency = 836.5 / N Hz. 1 = Timer-A rate (~16 Hz, "warble"-y, old behavior). 7 ≈ 119 Hz, matching the Win95 MIDI callback rate. 10–14 = slower / more subtle.|
+| `--lfo-rate-scale F` | 1.0 | Multiplies rate_word per voice. Prefer --lfo-divisor; use only when a specific voice needs a different LFO rate. |
+| `--lfo-depth-scale F` | 1.0 | Multiplies trem amplitude (tremolo depth). 0.5 halves the depth — useful for patches whose LFO still swings too far after the fixes. |
+| `--lfo-jitter-us U` | 6.0 | Adds uniform ±U µs jitter to Timer-A tick timing. Currently ineffective after the fixes; retained for diagnostic purposes. |
 
-🗂️ WOPN Banks (Byproducts)
+**Recommended workflow:** Start with `--enable-lfo` alone (default `lfo_divisor = 7`). If vibrato/tremolo still sounds too fast, try `--lfo-divisor 10`; if it feels too static, try `--lfo-divisor 5`. Only reach for `--lfo-depth-scale` when a specific voice has excessive amplitude swing.
+
+### 🗂️ WOPN Banks (Byproducts)
 In the folder, you can find two WOPN files:
 
-NECOPN_GM-fixed.wopn: [Recommended for libOPNMIDI] A heavily tweaked version modified by Wohlstand. He manually adjusted the decay rates and added a percussion kit to make it playable and pleasant in libOPNMIDI. (Note: Because a static WOPN lacks the driver's dynamic envelope logic, it will still sound different from the Python renderer).
+- **NECOPN_GM-fixed.wopn**: *Recommended for libOPNMIDI* A heavily tweaked version modified by Wohlstand. He manually adjusted the decay rates and added a percussion kit to make it playable and pleasant in libOPNMIDI. (Note: Because a static WOPN lacks the driver's dynamic envelope logic, it will still sound different from the Python renderer).
 
-NECOPN_GM.wopn: The raw byproduct generated directly by extract_bank.py from the original hardcoded data. It is strictly for visual inspection (e.g., in OPN2-BE) and is NOT recommended for direct playback due to static format limitations (e.g., infinite sustain bugs).
+- **NECOPN_GM.wopn**: The raw byproduct generated directly by extract_bank.py from the original hardcoded data. It is strictly for visual inspection (e.g., in OPN2-BE) and is NOT recommended for direct playback due to static format limitations (e.g., infinite sustain bugs).
 
 You can also generate the raw WOPN yourself without the .DRV:
+- Place extract_bank.py and fixed_bank.py in the same folder.
+- Run: `python extract_bank.py`
 
-Place extract_bank.py and fixed_bank.py in the same folder.
+### ⚠️ Known Issues
+- **Software LFO:** Previously audible electromagnetic noise and excessive warble have been resolved. The LFO is functionally usable but remains disabled by default because some quirks may yet be undiscovered. If you encounter odd vibrato/tremolo behavior, try tuning via the parameters above before reporting.
+- **VGM Export Issue:** Exported .vgm files may fail to play in strict players like foobar2000. This is a side-feature and is currently deprioritized.
 
-Run: python extract_bank.py
+### 🔬 Technical Details
+- **Voice Decoding:** Reads 64-byte records directly from the driver, mapping hardware values via the cs:0x1239 inversion table. Verified byte-for-byte against the original NECOPN.DRV.
+- **Velocity & Envelope:** Strictly follows the operator mask logic at 0x0BED and hardware SR/DR mechanisms.
+- **Timer Tick:** Driven by the 836.5 Hz Timer-A interrupt, precisely aligned with assembly instructions. Envelope state machine runs at this rate.
 
-⚠️ Known Issues
-Software LFO: Previously audible electromagnetic noise and excessive warble have been resolved. The LFO is functionally usable but remains disabled by default because some quirks may yet be undiscovered. If you encounter odd vibrato/tremolo behavior, try tuning via the parameters above before reporting.
+### Software LFO:
+- **Advance rate:** ~120 Hz, gated by `lfo_divisor = 7 (836.5 / 7)`. This matches the Win95 MIDI callback rate rather than the Timer-A rate — the driver polls irq_poll at MIDI event granularity, so LFO updates decimated relative to Timer-A.
+- **TL calculation:** Follows seg3:0x0F92-0x0FC8 byte-for-byte, including the unsigned-byte handling of the intermediate t1 that was the root cause of the old "electromagnetic noise".
+- **Shape 1/3 phase:** Counter uses `eff_counter = lfo_counter // lfo_divisor` so square/noise LFO frequencies are preserved despite the decimation.
 
-VGM Export Issue: Exported .vgm files may fail to play in strict players like foobar2000. This is a side-feature and is currently deprioritized.
-
-🔬 Technical Details
-Voice Decoding: Reads 64-byte records directly from the driver, mapping hardware values via the cs:0x1239 inversion table. Verified byte-for-byte against the original NECOPN.DRV.
-
-Velocity & Envelope: Strictly follows the operator mask logic at 0x0BED and hardware SR/DR mechanisms.
-
-Timer Tick: Driven by the 836.5 Hz Timer-A interrupt, precisely aligned with assembly instructions. Envelope state machine runs at this rate.
-
-Software LFO:
-
-Advance rate: ~120 Hz, gated by lfo_divisor = 7 (836.5 / 7). This matches the Win95 MIDI callback rate rather than the Timer-A rate — the driver polls irq_poll at MIDI event granularity, so LFO updates decimated relative to Timer-A.
-
-TL calculation: Follows seg3:0x0F92-0x0FC8 byte-for-byte, including the unsigned-byte handling of the intermediate t1 that was the root cause of the old "electromagnetic noise".
-
-Shape 1/3 phase: Counter uses eff_counter = lfo_counter // lfo_divisor so square/noise LFO frequencies are preserved despite the decimation.
-
-🙏 Credits & Disclaimer
-Massive thanks to Wohlstand for his guidance on WOPN, core comparison, manual WOPN bank tuning, and the cross-platform CMake/Linux build fixes.
-
-Thanks to cisc (fmgen), the NP21/W team, and Aaron Giles (ymfm).
-
-This project is for educational and preservation purposes only. All rights belong to NEC and YAMAHA.
+### 🙏 Credits & Disclaimer
+- Massive thanks to **Wohlstand** for his guidance on WOPN, core comparison, manual WOPN bank tuning, and the cross-platform CMake/Linux build fixes.
+- Thanks to **cisc (fmgen),** the NP21/W team, and **Aaron Giles (ymfm)**.
+- This project is for educational and preservation purposes only. All rights belong to NEC and YAMAHA.
