@@ -1,4 +1,14 @@
 # necopn_to_wopn.py
+# -*- coding: utf-8 -*-
+"""
+NECOPN 驱动级动态快照提取器 (W佬终极调优版)
+包含：
+1. 载波音量最大化 (Carrier Maximization)
+2. OP2/OP3 硬件顺序修复
+3. OPNA 芯片时钟标记 (修复镲片走音) - 改为在乐器数据内声明
+4. Synth Bass 2 专属移调修复
+"""
+
 import struct
 import os
 
@@ -42,17 +52,31 @@ def get_gm_name(i: int) -> str:
     return names[i] if i < len(names) else f"Instrument {i}"
 
 def pack_instrument(inst_data, key_offset, is_blank=False):
-    if is_blank: return b'\x00' * 69
+    if is_blank:
+        # 对于空白鼓组，我们也给它打上 OPNA 标记，以防万一
+        blank_buf = bytearray(b'\x00' * 69)
+        blank_buf[36] = 0x04 # Blank 乐器的 Global bank flags 偏移量是 36
+        return bytes(blank_buf)
+
     name = inst_data['name'].encode('ascii', 'ignore') + b'\x00'
     buf = bytearray()
-    buf.extend(name.ljust(32, b'\x00'))
-    buf.extend(struct.pack('>h', key_offset))
-    buf.append(0)
-    buf.append((inst_data['fb'] << 3) | inst_data['alg'])
-    buf.append(0x00)
     
-    # 修正 1：按 WOPN 规范要求的硬件顺序 [Op1, Op2, Op3, Op4] 重新排列
-    # 我们的列表是 [Op1(0), Op3(1), Op2(2), Op4(3)]，所以要按 [0, 2, 1, 3] 取出
+    # 1. Name (32 bytes)
+    buf.extend(name.ljust(32, b'\x00'))
+    
+    # 2. Key Offset (2 bytes)
+    buf.extend(struct.pack('>h', key_offset))
+    
+    # 3. Percussion Key (1 byte)
+    buf.append(0)
+    
+    # 4. FB & ALG (1 byte)
+    buf.append((inst_data['fb'] << 3) | inst_data['alg'])
+    
+    # 5. Global Flags (1 byte) - 核心修复：0x04 代表 OPNA
+    buf.append(0x04)
+    
+    # 6. Operators (按 [Op1, Op2, Op3, Op4] 重排)
     reordered_ops = [inst_data['operators'][0], inst_data['operators'][2], inst_data['operators'][1], inst_data['operators'][3]]
     
     for op in reordered_ops:
@@ -63,6 +87,8 @@ def pack_instrument(inst_data, key_offset, is_blank=False):
         buf.append(op['sr'])
         buf.append((op['sl'] << 4) | op['rr'])
         buf.append(0x00)
+        
+    # 7. Delays (4 bytes)
     buf.extend(struct.pack('>h', 1000))
     buf.extend(struct.pack('>h', 50))
     return bytes(buf)
@@ -78,7 +104,6 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
     
     velocity = 100 
     test_note = 60 # C4
-    
     melodic_entries = []
     
     for i, voice in enumerate(voices):
@@ -129,7 +154,7 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             }
             inst_data['operators'].append(op)
             
-        # 载波音量最大化
+        # 载波音量最大化 (Wohlstand's C++ logic)
         olevels = [inst_data['operators'][k]['tl'] for k in range(4)]
         dec = 0
         if alg in (0, 1, 2, 3):
@@ -150,30 +175,40 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             inst_data['operators'][1]['tl'] = olevels[1] - dec
             inst_data['operators'][3]['tl'] = olevels[3] - dec
             
-        # 修正 2：因为截取时使用的是硬件寄存器，音高已经是固定的 C4 了。
-        # 不需要、也不能再加上 FMOCTAVE 偏移（否则会降八度）。
-        melodic_entries.append(pack_instrument(inst_data, key_offset=0))
+        # 🎯 W佬特调：Synth Bass 2 (索引 38) 专属移调修复
+        key_offset = 0
+        if i == 38: # Synth Bass 2
+            key_offset = 12
+            
+        melodic_entries.append(pack_instrument(inst_data, key_offset))
         
     out_buf = bytearray()
+    # --- Header ---
     out_buf.extend(b'WOPN2-B2NK\x00')
     out_buf.extend(struct.pack('<H', 2))
     out_buf.extend(struct.pack('>H', 1))
     out_buf.extend(struct.pack('>H', 1))
-    out_buf.append(0x01) # 标记为 OPNA 芯片
+    # 修复：这里改回 0x00（全局 LFO 禁用），把 OPNA 标记写进乐器里
+    out_buf.append(0x00) 
     
+    # --- Meta Data ---
     out_buf.extend(b'NECOPN Dynamic'.ljust(32, b'\x00'))
     out_buf.extend(b'\x00\x00')
     out_buf.extend(b'NECOPN Percussion'.ljust(32, b'\x00'))
     out_buf.extend(b'\x00\x01')
     
-    for entry in melodic_entries: out_buf.extend(entry)
-    for _ in range(128): out_buf.extend(pack_instrument(None, 0, is_blank=True))
+    # --- Instruments ---
+    for entry in melodic_entries: 
+        out_buf.extend(entry)
+        
+    for _ in range(128): 
+        out_buf.extend(pack_instrument(None, 0, is_blank=True))
         
     with open(output_path, 'wb') as f:
         f.write(out_buf)
         
     print(f"✅ 成功！已生成 {output_path}")
-    print("已修正 Operator 顺序偏移与八度偏移问题。")
+    print("包含：OPNA 频率标记、Synth Bass 2 修正、Operator 顺序修正、载波音量最大化。")
 
 if __name__ == "__main__":
     generate_wopn_from_driver()
