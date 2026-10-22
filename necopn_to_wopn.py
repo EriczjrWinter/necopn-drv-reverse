@@ -1,11 +1,4 @@
 # necopn_to_wopn.py
-# -*- coding: utf-8 -*-
-"""
-NECOPN 驱动级动态快照提取器 (W佬原版音量归一化)
-原理：直接运行 NecopnSystem，使用伪芯片拦截寄存器写入，按 WOPN v2 规范实时打包。
-集成 Wohlstand 源码 (ym2612_to_wopi.cpp) 中的 Carrier Volume Maximization 算法。
-"""
-
 import struct
 import os
 
@@ -57,7 +50,12 @@ def pack_instrument(inst_data, key_offset, is_blank=False):
     buf.append(0)
     buf.append((inst_data['fb'] << 3) | inst_data['alg'])
     buf.append(0x00)
-    for op in inst_data['operators']:
+    
+    # 修正 1：按 WOPN 规范要求的硬件顺序 [Op1, Op2, Op3, Op4] 重新排列
+    # 我们的列表是 [Op1(0), Op3(1), Op2(2), Op4(3)]，所以要按 [0, 2, 1, 3] 取出
+    reordered_ops = [inst_data['operators'][0], inst_data['operators'][2], inst_data['operators'][1], inst_data['operators'][3]]
+    
+    for op in reordered_ops:
         buf.append((op['dt'] << 4) | op['mul'])
         buf.append(op['tl'])
         buf.append((op['ks'] << 6) | op['ar'])
@@ -78,13 +76,11 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
     voices = [Voice.from_record(bytes(r)) for r in VOICES_DATA]
     system.load_bank(voices, list(FMOCTAVE))
     
-    # 使用 100 力度，获取泛音厚度匹配实机的状态
     velocity = 100 
     test_note = 60 # C4
     
     melodic_entries = []
     
-    print(f"开始截获 128 个音色 (Velocity={velocity})，并执行 W佬 音量最大化算法...")
     for i, voice in enumerate(voices):
         chip0.regs = [0] * 256
         system.vstates[0] = system.vstates[0].__class__()
@@ -103,7 +99,6 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             system.tick()
             
         regs = chip0.regs
-        
         fbalg = regs[0xB0]
         alg = fbalg & 0x07
         inst_data = {
@@ -113,7 +108,6 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             'operators': []
         }
         
-        # 解析寄存器
         for slot_idx, off in enumerate(SLOT_OFFSET):
             dt_ml = regs[0x30 + off]
             tl    = regs[0x40 + off]
@@ -135,68 +129,51 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             }
             inst_data['operators'].append(op)
             
-        # ==========================================
-        # 🪄 W佬源码的忠实复刻：Carrier 音量最大化算法
-        # ==========================================
-        # 注意：Python 列表顺序是 [Op1(0), Op3(1), Op2(2), Op4(3)]
-        # 对应 W佬 C++ 里的 OPERATOR1=0, OPERATOR3=1, OPERATOR2=2, OPERATOR4=3
-        
+        # 载波音量最大化
         olevels = [inst_data['operators'][k]['tl'] for k in range(4)]
         dec = 0
-        
         if alg in (0, 1, 2, 3):
-            inst_data['operators'][3]['tl'] = 0  # OP4 = 0
-            
+            inst_data['operators'][3]['tl'] = 0
         elif alg == 4:
-            dec = min(olevels[1], olevels[3])    # min(OP3, OP4)
+            dec = min(olevels[1], olevels[3])
             inst_data['operators'][1]['tl'] = olevels[1] - dec
             inst_data['operators'][3]['tl'] = olevels[3] - dec
-            
         elif alg in (5, 6):
-            dec = min(olevels[2], olevels[1], olevels[3]) # min(OP2, OP3, OP4)
+            dec = min(olevels[2], olevels[1], olevels[3])
             inst_data['operators'][2]['tl'] = olevels[2] - dec
             inst_data['operators'][1]['tl'] = olevels[1] - dec
             inst_data['operators'][3]['tl'] = olevels[3] - dec
-            
         elif alg == 7:
-            dec = min(olevels[0], olevels[2], olevels[1], olevels[3]) # min(OP1, OP2, OP3, OP4)
+            dec = min(olevels[0], olevels[2], olevels[1], olevels[3])
             inst_data['operators'][0]['tl'] = olevels[0] - dec
             inst_data['operators'][2]['tl'] = olevels[2] - dec
             inst_data['operators'][1]['tl'] = olevels[1] - dec
             inst_data['operators'][3]['tl'] = olevels[3] - dec
-        # ==========================================
             
-        oct_val = FMOCTAVE[i]
-        if oct_val >= 128: oct_val -= 256
-        melodic_entries.append(pack_instrument(inst_data, oct_val))
+        # 修正 2：因为截取时使用的是硬件寄存器，音高已经是固定的 C4 了。
+        # 不需要、也不能再加上 FMOCTAVE 偏移（否则会降八度）。
+        melodic_entries.append(pack_instrument(inst_data, key_offset=0))
         
-        if (i + 1) % 32 == 0:
-            print(f"  已处理 {i + 1}/128...")
-            
-    print("正在组装 WOPN v2 文件结构...")
     out_buf = bytearray()
-    
     out_buf.extend(b'WOPN2-B2NK\x00')
     out_buf.extend(struct.pack('<H', 2))
     out_buf.extend(struct.pack('>H', 1))
     out_buf.extend(struct.pack('>H', 1))
-    out_buf.append(0x00)
+    out_buf.append(0x01) # 标记为 OPNA 芯片
     
     out_buf.extend(b'NECOPN Dynamic'.ljust(32, b'\x00'))
     out_buf.extend(b'\x00\x00')
     out_buf.extend(b'NECOPN Percussion'.ljust(32, b'\x00'))
     out_buf.extend(b'\x00\x01')
     
-    for entry in melodic_entries:
-        out_buf.extend(entry)
-    for _ in range(128):
-        out_buf.extend(pack_instrument(None, 0, is_blank=True))
+    for entry in melodic_entries: out_buf.extend(entry)
+    for _ in range(128): out_buf.extend(pack_instrument(None, 0, is_blank=True))
         
     with open(output_path, 'wb') as f:
         f.write(out_buf)
         
-    print(f"✅ 成功！已生成 {output_path} (大小: {len(out_buf)} 字节)")
-    print("现在可以直接在 OPN2 Bank Editor 或 libOPNMIDI 中使用了！")
+    print(f"✅ 成功！已生成 {output_path}")
+    print("已修正 Operator 顺序偏移与八度偏移问题。")
 
 if __name__ == "__main__":
     generate_wopn_from_driver()
