@@ -62,13 +62,21 @@ python player.py your_song.mid -o output.vgm --vgm
 **推荐调试路径：**先单独用 `--enable-lfo`（默认 `lfo_divisor = 7`）试听。如果颤音仍然偏快，改 `--lfo-divisor 10`；如果偏静态，改 `--lfo-divisor 5`。只有在个别音色幅度摆动明显过大时才动 `--lfo-depth-scale`。
 
 ### 🗂️ WOPN 音色包（逆向副产品）
-在文件夹中，你可以找到两个 WOPN 文件：
-- **NECOPN_GM-fixed.wopn：***推荐用于 libOPNMIDI* 这是一个由 Wohlstand 亲自进行修复与调优的版本。他手动调整了包络的衰减率（Decay），并添加了打击乐鼓组，使其在 libOPNMIDI 中听起来更自然、更好听。（注：由于静态 WOPN 无法执行驱动的动态包络逻辑，其效果仍会与 Python 渲染器存在一定区别）。
-- **NECOPN_GM.wopn：**这是由 extract_bank.py 基于原始驱动数据（或硬编码表）直接提取的原始 WOPN。由于静态格式的限制（如无法处理 RR=0），它仅供可视化参考（例如在 OPN2-BE 中查看），不推荐用于直接播放。
+在文件夹中，你可以找到三个 WOPN 文件：
 
-你无需原版 .drv 文件，即可自己生成原始 WOPN：
-- 将 extract_bank.py 与 fixed_bank.py 放在同一个文件夹中。
-- 运行：python extract_bank.py
+- **NECOPN_Dynamic.wopn**：*实验性 / 学习研究用* 由 `necopn_to_wopn.py` 基于“动态快照”方法生成（特别感谢 Wohlstand 提供的载波音量归一化算法指导）。该脚本会实例化 Python 驱动，通过“伪芯片”拦截真实的寄存器写入（包含动态 `OPMASK` 计算），并直接打包为 WOPN 格式。**注意：** 这代表了音色的“理想状态”。由于静态 WOPN 格式缺乏驱动原生的 6 通道动态环境（丢音机制、实时的通道互动），单独演奏这些音色可能会显得单薄，甚至觉得不如原驱动里好听。
+
+- **NECOPN_GM-fixed.wopn**：*推荐用于 libOPNMIDI* 这是一个由 Wohlstand 亲自进行修复与调优的版本。他手动调整了包络的衰减率（Decay），并添加了打击乐鼓组，使其在 libOPNMIDI 中听起来更自然、更好听。（注：由于静态 WOPN 无法执行驱动的动态包络逻辑，其效果仍会与 Python 渲染器存在一定区别）。
+
+- **NECOPN_GM.wopn**：这是由 `extract_bank.py` 基于原始驱动数据（或硬编码表）直接提取的原始 WOPN。由于静态格式的限制（如无法处理 RR=0），它仅供可视化参考（例如在 OPN2-BE 中查看），不推荐用于直接播放。
+
+你无需原版 `.drv` 文件，即可自己生成原始 WOPN：
+- 将 `extract_bank.py` 与 `fixed_bank.py` 放在同一个文件夹中。
+- 运行：`python extract_bank.py`
+
+**生成动态快照 WOPN：**
+- 将 `necopn_to_wopn.py` 与 `fixed_bank.py` 放在同一个文件夹中。
+- 运行：`python necopn_to_wopn.py`
 
 ### ⚠️ 已知限制
 - **软件 LFO：**此前出现的电磁噪音、过度颤动已修复。LFO 目前功能可用，但默认关闭，因为可能仍存在尚未探明的怪癖。若遇到异常的 vibrato/tremolo 表现，请先尝试通过上面的参数微调，再考虑报告问题。
