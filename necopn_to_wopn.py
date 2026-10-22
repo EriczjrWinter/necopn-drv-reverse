@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 # necopn_to_wopn.py
 # -*- coding: utf-8 -*-
 """
@@ -57,7 +58,7 @@ def pack_instrument(inst_data, key_offset, is_blank=False):
     buf.append(0)
     buf.append((inst_data['fb'] << 3) | inst_data['alg'])
     buf.append(0x00)
-    for op in inst_data['operators']:
+    for op in (inst_data['operators'][0], inst_data['operators'][2], inst_data['operators'][1], inst_data['operators'][3]):
         buf.append((op['dt'] << 4) | op['mul'])
         buf.append(op['tl'])
         buf.append((op['ks'] << 6) | op['ar'])
@@ -166,7 +167,7 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             inst_data['operators'][3]['tl'] = olevels[3] - dec
         # ==========================================
             
-        oct_val = FMOCTAVE[i]
+        oct_val = FMOCTAVE[i] + 12
         if oct_val >= 128: oct_val -= 256
         melodic_entries.append(pack_instrument(inst_data, oct_val))
         
