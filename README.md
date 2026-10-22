@@ -1,14 +1,14 @@
-# NECOPN.DRV 反向工程与渲染器
+# NECOPN.DRV Reverse Engineering & Renderer
 
-> **语言**: [English | [简体中文](README_zh.md)]
+> **Language**: [English | [简体中文](README_zh.md)]
 
-本项目是对 `NECOPN.DRV` MIDI 驱动程序的深度逆向工程与高保真重实现，该驱动程序专用于运行 Windows 95 的 NEC PC-9821。通过结合 Python 与自定义的 C++ 核心，它旨在重现原始硬件的精确音效行为和音色分配逻辑。
+This project is a deep reverse engineering and high-fidelity reimplementation of the `NECOPN.DRV` MIDI driver, exclusively used in NEC PC-9821 running Windows 95. By combining Python with a custom C++ core, it aims to reproduce the exact sonic behavior and voice allocation logic of the original hardware.
 
-> **🎯 状态**：已实现对原始硬件（音高、包络、音色分配和节奏）的基本完整复现。软件LFO现已正常工作，所有先前可听见的瑕疵（电磁噪声、过度颤音）均已解决——尽管仍可能存在未发现的怪癖。
+> **🎯 Status**: Basic complete reproduction of the original hardware (Pitch, Envelope, Voice allocation, and Rhythm) is achieved. Software LFO is now functional with all previously audible artifacts (electromagnetic noise, excessive warble) resolved — though undiscovered quirks may remain.
 > 
-> **📦 开箱即用**: 包含一个硬编码的 `fixed_bank.py`（从原始驱动中提取）。 **您无需原始 `NECOPN.DRV`来运行播放器。
+> **📦 Out-of-the-box**: A hardcoded `fixed_bank.py` (extracted from the original driver) is included. **You do NOT need the original `NECOPN.DRV` to run the player.**
 
-## 🏗️ 架构与核心说明
+## 🏗️ Architecture & Core Notes
 
 **1. Software Mapping of "Dual Chips"**
 Although the PC-98 hardware features a YM2608 (OPNA), the official driver strictly limits itself to CH0-CH2 on each chip to avoid hardware quirks. Therefore, this project maps the **2 core instances × 3 channels per core (6 voices total)** software architecture, perfectly replicating the driver's logic rather than the physical hardware limits.
