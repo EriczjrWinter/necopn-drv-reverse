@@ -1,14 +1,5 @@
-# necopn_to_wopn.py
+# necopn_to_banks.py
 # -*- coding: utf-8 -*-
-"""
-NECOPN 驱动级动态快照提取器 (W佬终极调优版)
-包含：
-1. 载波音量最大化 (Carrier Maximization)
-2. OP2/OP3 硬件顺序修复
-3. OPNA 芯片时钟标记 (修复镲片走音) - 改为在乐器数据内声明
-4. Synth Bass 2 专属移调修复
-"""
-
 import struct
 import os
 
@@ -51,49 +42,7 @@ def get_gm_name(i: int) -> str:
         "Telephone Ring", "Helicopter", "Applause", "Gunshot"]
     return names[i] if i < len(names) else f"Instrument {i}"
 
-def pack_instrument(inst_data, key_offset, is_blank=False):
-    if is_blank:
-        # 对于空白鼓组，我们也给它打上 OPNA 标记，以防万一
-        blank_buf = bytearray(b'\x00' * 69)
-        blank_buf[36] = 0x04 # Blank 乐器的 Global bank flags 偏移量是 36
-        return bytes(blank_buf)
-
-    name = inst_data['name'].encode('ascii', 'ignore') + b'\x00'
-    buf = bytearray()
-    
-    # 1. Name (32 bytes)
-    buf.extend(name.ljust(32, b'\x00'))
-    
-    # 2. Key Offset (2 bytes)
-    buf.extend(struct.pack('>h', key_offset))
-    
-    # 3. Percussion Key (1 byte)
-    buf.append(0)
-    
-    # 4. FB & ALG (1 byte)
-    buf.append((inst_data['fb'] << 3) | inst_data['alg'])
-    
-    # 5. Global Flags (1 byte) - 核心修复：0x04 代表 OPNA
-    buf.append(0x04)
-    
-    # 6. Operators (按 [Op1, Op2, Op3, Op4] 重排)
-    reordered_ops = [inst_data['operators'][0], inst_data['operators'][2], inst_data['operators'][1], inst_data['operators'][3]]
-    
-    for op in reordered_ops:
-        buf.append((op['dt'] << 4) | op['mul'])
-        buf.append(op['tl'])
-        buf.append((op['ks'] << 6) | op['ar'])
-        buf.append(op['dr']) 
-        buf.append(op['sr'])
-        buf.append((op['sl'] << 4) | op['rr'])
-        buf.append(0x00)
-        
-    # 7. Delays (4 bytes)
-    buf.extend(struct.pack('>h', 1000))
-    buf.extend(struct.pack('>h', 50))
-    return bytes(buf)
-
-def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
+def generate_banks():
     print("正在初始化虚拟芯片和 NECOPN 驱动...")
     chip0 = PseudoChipCore()
     chip1 = PseudoChipCore()
@@ -103,8 +52,12 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
     system.load_bank(voices, list(FMOCTAVE))
     
     velocity = 100 
-    test_note = 60 # C4
+    test_note = 60
     melodic_entries = []
+    
+    # VOPM 文件头（使用严格的 \r\n）
+    opm_text = "//OPM file writer - NECOPN Extractor\r\n"
+    opm_text += "//Dynamic snapshot extraction for VOPM\r\n\r\n"
     
     for i, voice in enumerate(voices):
         chip0.regs = [0] * 256
@@ -126,10 +79,12 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
         regs = chip0.regs
         fbalg = regs[0xB0]
         alg = fbalg & 0x07
+        fb = (fbalg >> 3) & 0x07
+        
         inst_data = {
-            'name': get_gm_name(i),
+            'name': get_gm_name(i).replace(' ', '_'),
             'alg': alg,
-            'fb': (fbalg >> 3) & 0x07,
+            'fb': fb,
             'operators': []
         }
         
@@ -154,61 +109,97 @@ def generate_wopn_from_driver(output_path="NECOPN_Dynamic.wopn"):
             }
             inst_data['operators'].append(op)
             
-        # 载波音量最大化 (Wohlstand's C++ logic)
+        # ==========================================
+        # 1. WOPN 打包 (带载波音量最大化)
+        # ==========================================
         olevels = [inst_data['operators'][k]['tl'] for k in range(4)]
         dec = 0
+        max_inst_data = {'name': inst_data['name'], 'alg': alg, 'fb': fb, 'operators': [op.copy() for op in inst_data['operators']]}
+        
         if alg in (0, 1, 2, 3):
-            inst_data['operators'][3]['tl'] = 0
+            max_inst_data['operators'][3]['tl'] = 0
         elif alg == 4:
             dec = min(olevels[1], olevels[3])
-            inst_data['operators'][1]['tl'] = olevels[1] - dec
-            inst_data['operators'][3]['tl'] = olevels[3] - dec
+            max_inst_data['operators'][1]['tl'] = olevels[1] - dec
+            max_inst_data['operators'][3]['tl'] = olevels[3] - dec
         elif alg in (5, 6):
             dec = min(olevels[2], olevels[1], olevels[3])
-            inst_data['operators'][2]['tl'] = olevels[2] - dec
-            inst_data['operators'][1]['tl'] = olevels[1] - dec
-            inst_data['operators'][3]['tl'] = olevels[3] - dec
+            max_inst_data['operators'][2]['tl'] = olevels[2] - dec
+            max_inst_data['operators'][1]['tl'] = olevels[1] - dec
+            max_inst_data['operators'][3]['tl'] = olevels[3] - dec
         elif alg == 7:
             dec = min(olevels[0], olevels[2], olevels[1], olevels[3])
-            inst_data['operators'][0]['tl'] = olevels[0] - dec
-            inst_data['operators'][2]['tl'] = olevels[2] - dec
-            inst_data['operators'][1]['tl'] = olevels[1] - dec
-            inst_data['operators'][3]['tl'] = olevels[3] - dec
+            max_inst_data['operators'][0]['tl'] = olevels[0] - dec
+            max_inst_data['operators'][2]['tl'] = olevels[2] - dec
+            max_inst_data['operators'][1]['tl'] = olevels[1] - dec
+            max_inst_data['operators'][3]['tl'] = olevels[3] - dec
             
-        # 🎯 W佬特调：Synth Bass 2 (索引 38) 专属移调修复
-        key_offset = 0
-        if i == 38: # Synth Bass 2
-            key_offset = 12
-            
-        melodic_entries.append(pack_instrument(inst_data, key_offset))
+        key_offset = 12 if i == 38 else 0
         
+        buf = bytearray()
+        buf.extend(inst_data['name'].encode('ascii', 'ignore').ljust(32, b'\x00'))
+        buf.extend(struct.pack('>h', key_offset))
+        buf.append(0)
+        buf.append((fb << 3) | alg)
+        buf.append(0x04) # OPNA 标记
+        
+        reordered_max = [max_inst_data['operators'][0], max_inst_data['operators'][2], max_inst_data['operators'][1], max_inst_data['operators'][3]]
+        for op in reordered_max:
+            buf.append((op['dt'] << 4) | op['mul'])
+            buf.append(op['tl'])
+            buf.append((op['ks'] << 6) | op['ar'])
+            buf.append(op['dr']) 
+            buf.append(op['sr'])
+            buf.append((op['sl'] << 4) | op['rr'])
+            buf.append(0x00)
+        buf.extend(struct.pack('>h', 1000))
+        buf.extend(struct.pack('>h', 50))
+        melodic_entries.append(bytes(buf))
+
+        # ==========================================
+        # 2. OPM 文本构建 (严格兼容 VOPM，且应用载波音量最大化)
+        # ==========================================
+        opm_text += f"@:{i} {inst_data['name']}\r\n"
+        opm_text += "LFO: 0 0 0 0 0\r\n"
+        
+        # CH 行: PAN FL CON AMS PMS slot_mask NE
+        opm_text += f"CH: 64 {fb} {alg} 0 0 120 0\r\n"
+        
+        op_names = ["M1", "C1", "M2", "C2"]
+        # 修改：遍历 max_inst_data['operators'] 而不是 inst_data
+        for idx, op in enumerate(max_inst_data['operators']):
+            line = f"{op_names[idx]}: {op['ar']:02d} {op['dr']:02d} {op['sr']:02d} {op['rr']:02d} {op['sl']:02d} {op['tl']:02d} {op['ks']:02d} {op['mul']:02d} {op['dt']:02d} 0 0\r\n"
+            opm_text += line
+        opm_text += "\r\n"
+
+    # ==========================================
+    # 写入文件
+    # ==========================================
+    # 1. 写 WOPN
     out_buf = bytearray()
-    # --- Header ---
     out_buf.extend(b'WOPN2-B2NK\x00')
     out_buf.extend(struct.pack('<H', 2))
     out_buf.extend(struct.pack('>H', 1))
     out_buf.extend(struct.pack('>H', 1))
-    # 修复：这里改回 0x00（全局 LFO 禁用），把 OPNA 标记写进乐器里
     out_buf.append(0x00) 
-    
-    # --- Meta Data ---
     out_buf.extend(b'NECOPN Dynamic'.ljust(32, b'\x00'))
     out_buf.extend(b'\x00\x00')
     out_buf.extend(b'NECOPN Percussion'.ljust(32, b'\x00'))
     out_buf.extend(b'\x00\x01')
     
-    # --- Instruments ---
-    for entry in melodic_entries: 
-        out_buf.extend(entry)
+    for entry in melodic_entries: out_buf.extend(entry)
+    for _ in range(128): out_buf.extend(b'\x00' * 69)
         
-    for _ in range(128): 
-        out_buf.extend(pack_instrument(None, 0, is_blank=True))
-        
-    with open(output_path, 'wb') as f:
+    with open("NECOPN_Dynamic.wopn", 'wb') as f:
         f.write(out_buf)
+    print("✅ 成功生成: NECOPN_Dynamic.wopn")
         
-    print(f"✅ 成功！已生成 {output_path}")
-    print("包含：OPNA 频率标记、Synth Bass 2 修正、Operator 顺序修正、载波音量最大化。")
+    # 2. 写 OPM (使用严格编码和换行)
+    # 强制只保留 ASCII 字符，防止 VOPM 报错
+    final_opm_text = opm_text.encode('ascii', 'ignore').decode('ascii')
+    with open("NECOPN_GM.opm", "wb") as f:
+        f.write(final_opm_text.encode('ascii'))
+    print("✅ 成功生成: NECOPN_GM.opm (完美兼容 VOPM 与 OPN2BE)")
 
 if __name__ == "__main__":
-    generate_wopn_from_driver()
+    generate_banks()

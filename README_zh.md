@@ -61,25 +61,22 @@ python player.py your_song.mid -o output.vgm --vgm
 
 **推荐调试路径：**先单独用 `--enable-lfo`（默认 `lfo_divisor = 7`）试听。如果颤音仍然偏快，改 `--lfo-divisor 10`；如果偏静态，改 `--lfo-divisor 5`。只有在个别音色幅度摆动明显过大时才动 `--lfo-depth-scale`。
 
-### 🗂️ WOPN 音色包（逆向副产品）
-在文件夹中，你可以找到三个 WOPN 文件：
+### 🗂️ 音色库与预设（逆向副产品）
+在文件夹中，你可以找到三个 WOPN 音色包以及一个 OPM 预设库：
 
-- **NECOPN_Dynamic.wopn**：*强烈推荐用于 libOPNMIDI / 理想状态* 由 `necopn_to_wopn.py` 通过“伪芯片”动态快照技术生成（集成了 Wohlstand 的载波音量归一化算法）。它精准截获了原驱动内部由动态 `OPMASK` 算出的真实泛音结构，音色**极度接近实机驱动的内部状态**。不过，由于静态 WOPN 无法完全复现原生的 6 通道动态环境（如丢音机制、实时包络互动），其听感与 Python 渲染器/实机依旧存在一定区别。你可以将其视为脱离极端硬件限制后的**“理想状态”**。该音色包音量已经修正，非常适合直接在 libOPNMIDI 中演奏。
+#### WOPN 音色包（用于 libOPNMIDI）
+- **NECOPN_Dynamic.wopn**：*强烈推荐用于 libOPNMIDI / 理想状态* 由 `necopn_to_banks.py` 通过“伪芯片”动态快照技术生成（集成了 Wohlstand 的载波音量归一化算法）。它精准截获了原驱动内部由动态 `OPMASK` 算出的真实泛音结构，音色**极度接近实机驱动的内部状态**。该音色包音量已经修正，非常适合直接在 libOPNMIDI 中演奏。
+- **NECOPN_GM-fixed.wopn**：*Wohlstand 终极调优版* 由 **Wohlstand** 亲自深度打磨。包含三大关键修复：芯片类型标记为 OPNA (强制 8MHz 主频以还原镲片音高)、补齐打击乐鼓组、以及为 *Synth Bass 2* 专门修正了 `+12` 半音的音高偏移。
+- **NECOPN_GM.wopn**：由 `extract_bank.py` 基于原始硬编码表直接提取的原始 WOPN。仅供可视化参考（如 OPN2-BE），不推荐用于直接播放。
 
-- **NECOPN_GM-fixed.wopn**：*强烈推荐用于 libOPNMIDI / Wohlstand 终极调优版* 这是一个由 **Wohlstand** 亲自进行了深度打磨与修复的版本。除了补齐打击乐鼓组，他还针对硬件特性做了两个极其关键的修复：
-  1. **芯片类型标记为 OPNA (0x01)**：这会强制模拟器（如 libOPNMIDI）底层使用 YM2608 的 8MHz 主频，而不是 OPN2 的 7.67MHz。这确保了高频打击乐（尤其是**镲片 Cymbals**）的音高和听感完美还原。
-  2. **单音色音高修复**：在全局移调被清除后，他专门为 *Synth Bass 2* 音色手动加上了 `+12` 的半音偏移，纠正了它的基准音高，使其与原版 GM 标准完美对齐。
-  *（注：由于静态 WOPN 无法执行驱动原生的动态包络逻辑，其听感与 Python 渲染器仍会存在一定区别，但这已是目前最完美、最好听的静态音色库。）*
+#### OPM 预设库（用于 VOPM / FB-02）
+- **NECOPN_GM.opm**：将动态快照直接翻译为 OPM (YM2151) 合成器所需的 `.opm` 文本格式。这是一个“落叶归根”的实验：将 OPN2/OPNA 的寄存器参数逆向翻译回它们的“祖先” OPM。与 OPN2-BE 粗糙的 WOPN 转 OPM（极易导致包络崩坏、声音像打鼓）不同，本脚本精准映射了原始包络逻辑与算子重排。它完美保留了 NECOPN 的原始音色 DNA，让你能在现代硬件级 OPM 引擎上，配合极其丝滑的硬件 LFO 演奏这些经典音色。*（注：VOPM 只是个音源插件，不是 MIDI 播放器，你需要借助 DAW 来使用此预设库。）*
 
-- **NECOPN_GM.wopn**：这是由 `extract_bank.py` 基于原始驱动数据（或硬编码表）直接提取的原始 WOPN。由于静态格式的限制（如无法处理 RR=0），它仅供可视化参考（例如在 OPN2-BE 中查看），不推荐用于直接播放。
-
-你无需原版 `.drv` 文件，即可自己生成原始 WOPN：
-- 将 `extract_bank.py` 与 `fixed_bank.py` 放在同一个文件夹中。
-- 运行：`python extract_bank.py`
-
-**生成动态快照 WOPN：**
-- 将 `necopn_to_wopn.py` 与 `fixed_bank.py` 放在同一个文件夹中。
-- 运行：`python necopn_to_wopn.py`
+#### 脚本生成
+你无需原版 `.drv` 文件，即可自己生成这些文件：
+- 将 `extract_bank.py`、`necopn_to_wopn.py` 与 `fixed_bank.py` 放在同一个文件夹中。
+- 运行：`python extract_bank.py`（生成原始 WOPN）
+- 运行：`python necopn_to_wopn.py`（生成动态快照 WOPN 与 OPM 预设）
 
 ### ⚠️ 已知限制
 - **软件 LFO：**此前出现的电磁噪音、过度颤动已修复。LFO 目前功能可用，但默认关闭，因为可能仍存在尚未探明的怪癖。若遇到异常的 vibrato/tremolo 表现，请先尝试通过上面的参数微调，再考虑报告问题。
