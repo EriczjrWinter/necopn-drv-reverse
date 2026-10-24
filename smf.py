@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """标准 MIDI 文件（SMF type 0/1/2）解析 —— 只取播放需要的部分。
 
@@ -7,22 +6,13 @@ kind: 'on' | 'off' | 'cc' | 'prog' | 'bend' | 'tempo' | 'meta'
 
 修复记录
 --------
-早期版本在元事件分支 `continue` 时保留了 `status = 0xFF`，导致紧随其后的
-**运行状态（running status）音符事件**被误读为元事件，并按错误的长度跳过
-一大段数据 —— 症状是某些段落整段音符丢失、NOTE_OFF_MISS 密集出现。
+1. 早期版本在元事件分支 `continue` 时保留了 `status = 0xFF`，导致紧随其后的
+   **运行状态（running status）音符事件**被误读为元事件，并按错误的长度跳过
+   一大段数据 —— 症状是某些段落整段音符丢失、NOTE_OFF_MISS 密集出现。
 
-正确处理：running status 只由 0x80-0xEF 的状态字节更新，元事件 / 系统
-事件（0xF0-0xFF）不影响它。本文件按下述规则实现：
-
-    b = 下一个字节
-    if b >= 0x80:                # 显式状态字节
-        if b < 0xF0:             # 0x80-0xEF 是 MIDI 通道消息，更新 running status
-            running_status = b
-        status = b
-        读 b
-    else:                        # 运行状态
-        status = running_status  # 使用上一次的通道状态
-        不读字节
+2. 【新增】兼容 CSWare社等老GAL厂商非标准软件生成的 `FF 51 04` (Tempo 事件长度错误)。
+   这会导致部分曲目的 BPM 计算全盘崩溃，音符挤在一起。此版本现在会自动提取
+   前 3 字节作为有效数据，并正确跳过多余的脏字节，保持字节流完美对齐。
 """
 from __future__ import annotations
 
@@ -119,12 +109,17 @@ def parse_smf(data: bytes, debug: bool = False) -> Tuple[List[Event], int, int]:
                 ln, i = _read_vlq(data, i, end)
                 if i + ln > end:
                     raise ValueError(f"track {track_i}: 元事件 payload 越界")
-                payload = data[i:i + ln]
-                i += ln
-                n_meta += 1
-                if meta == 0x51 and ln == 3:
+                
+                # 【核心修复：兼容 FF 51 04】
+                if meta == 0x51 and ln >= 3:
+                    # 不管 ln 是 3 还是 4，都只取前 3 字节计算 Tempo
+                    payload = data[i:i + 3]
                     tempo_map.append(
                         (tick, (payload[0] << 16) | (payload[1] << 8) | payload[2]))
+                
+                # 步进指针时使用原始 ln，保证完美跳过脏数据，不破坏后续字节
+                i += ln
+                n_meta += 1
                 # 元事件不改变 running_status
                 continue
 
