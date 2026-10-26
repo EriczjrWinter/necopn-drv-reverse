@@ -49,6 +49,25 @@ python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
 python player.py your_song.mid -o output.vgm --vgm
 ```
 
+### 🎛️ The Ultimate Conclusion on the Software LFO: It Was Never Enabled
+During our initial reverse engineering and listening tests, we noticed that enabling --enable-lfo caused audible phase drifting ("big-small" waveform jumps) or clipping, and that the "LFO disabled" mode perfectly matched the audio output of the NP21/W emulator. After a final cross-examination of the disassembly, we have reached the ultimate conclusion: NECOPN.DRV explicitly "sealed" the software LFO right at driver initialization.
+
+Technical Evidence (seg1:0x0B28):
+In the MYFAIRLADY initialization function inside seg1, there is a very subtle instruction:
+
+```assembly
+0B28: c606782800    mov byte ptr [0x2878], 0
+0x2878 in the data segment seg4 is an LFO enable bitmask, where the lower 6 bits correspond to the 6 logical channels. The NEC engineers explicitly cleared this flag right at driver startup. As a result, the irq_poll (0x0D27) routine bypasses all LFO calculation logic entirely during polling.
+```
+
+### 🎛️The Historical Truth & Listening Verification:
+
+Hardware Default is No-LFO: A real PC-98 playing MIDI under Windows 95 outputs pure hardware ADSR envelopes. Our Python player defaults to LFO-disabled (--enable-lfo kept off), which perfectly aligns 1:1 with the authentic hardware behavior.
+
+Why the "Weird Sound" Happened: Forcing --enable-lfo in Python is equivalent to awakening a beast abandoned by NEC. The "big-small" audio artifacts are actually caused by an unoptimized Sawtooth LFO wave combined with unreset phase accumulators, resulting in phase drift.
+
+Why It Was Abandoned: It is highly likely that the scheduling latency under Win16 protected mode could not provide a stable 836Hz clock, or the NEC engineers simply found the LFO algorithm sounded terrible, ultimately disabling it at the code level. If you want to use it, please add the --enable-lfo parameter.
+
 ### 🎛️ LFO Tuning (Advanced)
 The software LFO is disabled by default. Once enabled with --enable-lfo, the following parameters are available for fine-tuning:
 
@@ -79,7 +98,7 @@ To generate these files without the original `.DRV`:
 - Run: `python necopn_to_wopn.py` (generates Dynamic WOPN and OPM preset)
 
 ###
-- **Software LFO:** Previously audible electromagnetic noise and excessive warble have been resolved. The LFO is functionally usable but remains disabled by default because some quirks may yet be undiscovered. If you encounter odd vibrato/tremolo behavior, try tuning via the parameters above before reporting.
+- **Software LFO:** The previously audible electromagnetic noise and excessive warble have been fixed. The LFO is currently functional but disabled by default. For details, please see [🎛️ The Ultimate Conclusion on the Software LFO: It Was Never Enabled].
 - **VGM Export Issue:** Exported .vgm files may fail to play in strict players like foobar2000. This is a side-feature and is currently deprioritized.
 
 ### 🔬 Technical Details
