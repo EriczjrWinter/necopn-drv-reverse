@@ -97,7 +97,7 @@ To generate these files without the original `.DRV`:
 - Run: `python extract_bank.py` (generates raw WOPN)
 - Run: `python necopn_to_wopn.py` (generates Dynamic WOPN and OPM preset)
 
-###
+### ⚠️ Known Issues
 - **Software LFO:** The previously audible electromagnetic noise and excessive warble have been fixed. The LFO is currently functional but disabled by default. For details, please see [🎛️ The Ultimate Conclusion on the Software LFO: It Was Never Enabled].
 - **VGM Export Issue:** Exported .vgm files may fail to play in strict players like foobar2000. This is a side-feature and is currently deprioritized.
 
