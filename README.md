@@ -50,15 +50,22 @@ python player.py your_song.mid -o output.vgm --vgm
 ```
 
 ### 🎛️ The Ultimate Conclusion on the Software LFO: It Was Never Enabled
-During our initial reverse engineering and listening tests, we noticed that enabling --enable-lfo caused audible phase drifting ("big-small" waveform jumps) or clipping, and that the "LFO disabled" mode perfectly matched the audio output of the NP21/W emulator. After a final cross-examination of the disassembly, we have reached the ultimate conclusion: NECOPN.DRV explicitly "sealed" the software LFO right at driver initialization.
+During our initial reverse engineering and listening tests, we noticed that enabling --enable-lfo caused audible phase drifting ("big-small" waveform jumps) or clipping, and that the "LFO disabled" mode perfectly matched the audio output of the NP21/W emulator. After a final cross-examination of the disassembly, we have reached the ultimate conclusion: NECOPN.DRV explicitly "sealed" the software LFO at the data structure level right during driver initialization.
 
-Technical Evidence (seg1:0x0B28):
-In the MYFAIRLADY initialization function inside seg1, there is a very subtle instruction:
+🔍 Technical Evidence (seg1:0x01CD & seg3:0x0D6D)
+In the initialization routine inside seg1, when the driver allocates the channel context structure, there is a very subtle instruction:
 
 ```assembly
-0B28: c606782800    mov byte ptr [0x2878], 0
-0x2878 in the data segment seg4 is an LFO enable bitmask, where the lower 6 bits correspond to the 6 logical channels. The NEC engineers explicitly cleared this flag right at driver startup. As a result, the irq_poll (0x0D27) routine bypasses all LFO calculation logic entirely during polling.
+01CD: c745180100    mov word ptr [di + 0x18], 1
+The channel status word at offset 0x18 is forced to 1 (binary 0000 0001).
 ```
+Subsequently, in the Timer-A interrupt polling routine (irq_poll -> 0x0D59) inside seg3:
+```assembly
+0D6D: f6471880      test byte ptr [bx + 0x18], 0x80
+0D71: 7503          jne 0xd76
+0D73: e98501        jmp 0xefb
+```
+The sole condition for the LFO to execute is if Bit 7 at offset 0x18 is 1. Because the initial value is 1, Bit 7 remains 0. Therefore, every time the interrupt hits this point, it executes jmp 0xefb, completely bypassing all LFO calculation logic. The seal is only broken if the driver receives a specific private SysEx that triggers the or [bx+0x18], 0x83 instruction.
 
 ### 🎛️The Historical Truth & Listening Verification:
 
