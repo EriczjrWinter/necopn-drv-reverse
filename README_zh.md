@@ -49,6 +49,25 @@ python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
 python player.py your_song.mid -o output.vgm --vgm
 ```
 
+### 🎛️ 关于软件 LFO 的最终结论：它根本“没被启用”
+在早期的逆向与听感测试中，我们曾发现开启 --enable-lfo 会导致音频出现“一大一小”的相位漂移或爆音，且无 LFO 模式与 NP21/W 模拟器听感高度一致。经过对反汇编的最终复核，我们得出了最终结论：NECOPN.DRV 在初始化时，直接把软件 LFO 给“封印”了。
+
+- **技术铁证（seg1:0x0B28）：**
+在 seg1 的 MYFAIRLADY 初始化函数中，有一条极其不起眼的指令：
+
+```assembly
+0B28: c606782800    mov byte ptr [0x2878], 0
+0x2878 位于数据段 seg4，是一个低 6 位分别对应 6 个逻辑通道的 LFO 启用位掩码（Bitmask）。NEC 的工程师在驱动启动的第一时间，就把它清零了。这导致 irq_poll (0x0D27) 在轮询时，直接跳过了所有的 LFO 计算逻辑。
+```
+
+- **历史真相与听感验证：**
+
+实机默认无 LFO：真实的 PC-98 在 Win95 下播放 MIDI 时，默认输出的是纯净的硬件 ADSR 包络。我们 Python 播放器中默认关闭 LFO（--enable-lfo 保持关闭）的设计，恰好实现了与实机 1:1 的行为对齐。
+
+为什么会有“怪声”：如果强行在 Python 中开启 LFO，等于唤醒了这头被 NEC 遗弃的怪物。那个“一大一小”的声音，实际上是早期未调优的锯齿波（Sawtooth）加上未重置的相位累加器导致的相位漂移（Phase Drift）。
+
+为何被弃用：可能是由于 Win16 保护模式下的调度延迟无法提供稳定的 836Hz 时钟，或者 NEC 工程师发现该 LFO 算法表现糟糕，最终在代码层面将其彻底禁用，若你想使用，请加入参数 --enable-lfo。
+
 ### 🎛️ LFO 参数调优（进阶）
 软件 LFO 默认关闭。通过 --enable-lfo 开启后，可使用以下参数微调：
 
@@ -79,7 +98,7 @@ python player.py your_song.mid -o output.vgm --vgm
 - 运行：`python necopn_to_wopn.py`（生成动态快照 WOPN 与 OPM 预设）
 
 ### ⚠️ 已知限制
-- **软件 LFO：**此前出现的电磁噪音、过度颤动已修复。LFO 目前功能可用，但默认关闭，因为可能仍存在尚未探明的怪癖。若遇到异常的 vibrato/tremolo 表现，请先尝试通过上面的参数微调，再考虑报告问题。
+- **软件 LFO：**此前出现的电磁噪音、过度颤动已修复。LFO 目前功能可用，但默认关闭，详情请见[🎛️ 关于软件 LFO 的最终结论：它根本“没被启用”]。
 - **VGM 导出异常：**通过 --vgm 导出的文件在部分严格校验的播放器（如 foobar2000 vgmplay）中可能无法发声。作为旁支辅助功能，目前暂未修复。
 
 ### 🔬 技术细节
