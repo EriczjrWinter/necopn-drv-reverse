@@ -49,6 +49,14 @@ python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
 python player.py your_song.mid -o output.vgm --vgm
 ```
 
+ ### 🧪 Experimental: NECOPN with SSG Support (`necopn-drv-reverse-gai`)
+Located in the `experimental/necopn-drv-reverse-gai` directory, this is a highly experimental Python renderer based on the original NECOPN driver, but extended with **SSG (Software-Controlled Sound Generator) synthesis** to participate in MIDI playback.
+
+*   **Inspiration**: The allocation logic is inspired by the decompiled `MID2VGM` tool, which statically binds the quietest MIDI channels (lowest CC7 peak) to SSG channels to save FM polyphony.
+*   **Architecture**: Theoretically capable of providing real-time SSG responses during streaming MIDI playback.
+*   **Known Limitations**: Currently highly imperfect. Because `NECOPN` relies on real-time streaming decisions (unlike offline global allocation), it cannot predict future notes. This results in the intrinsic flaw of **allocation jitter**—in dense musical passages, notes may jump erratically between FM and SSG, and SSG slots may be chaotically stolen, causing inconsistent timbres.
+*   **Disclaimer**: This is an architectural extension, **not** the original behavior of `NECOPN.DRV` (which completely ignores SSG registers). Use with caution.
+
 ### 🎛️ The Ultimate Conclusion on the Software LFO: It Was Never Enabled
 During our initial reverse engineering and listening tests, we noticed that enabling --enable-lfo caused audible phase drifting ("big-small" waveform jumps) or clipping, and that the "LFO disabled" mode perfectly matched the audio output of the NP21/W emulator. After a final cross-examination of the disassembly, we have reached the ultimate conclusion: NECOPN.DRV explicitly "sealed" the software LFO at the data structure level right during driver initialization.
 
