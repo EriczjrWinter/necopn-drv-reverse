@@ -49,6 +49,14 @@ python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
 python player.py your_song.mid -o output.vgm --vgm
 ```
 
+### 🧪 实验性分支：支持 SSG 的 NECOPN (`necopn-drv-reverse-gai`)
+位于 `experimental/necopn-drv-reverse-gai` 目录下。这是一个基于原版 NECOPN 驱动的实验性 Python 渲染器，但加入了 **SSG（方波音源）合成**以参与 MIDI 播放。
+
+*   **设计来源**：通道分配逻辑参考了反编译的 `MID2VGM` 工具。该工具通过静态绑定整轨音量最轻（CC7峰值最低）的通道给 SSG，来节省 FM 复音数。
+*   **理论架构**：理论上可以做到即时（实时）播放 MIDI 时加入 SSG 响应。
+*   **已知限制**：目前并不完善。因为 `NECOPN` 是基于实时事件流的驱动（无法像离线全局分配那样预知未来），存在**分配抖动**的固有缺陷——在复杂密集的曲目中，同一通道的音符可能在 FM 和 SSG 之间反复横跳，SSG 槽位也会被混乱抢占，导致音色不连贯。
+*   **免责声明**：这是复现工具的架构扩展，**并非** `NECOPN.DRV` 的原生行为（原驱动完全未初始化 SSG 寄存器）。请谨慎食用。
+
 ### 🎛️ 关于软件 LFO 的最终结论：它根本“没被启用”
 在最初的逆向工程和听感测试中，我们注意到启用 --enable-lfo 会导致明显的相位漂移（产生“一大一小”的波形跳跃）或者爆音，而“无 LFO”模式则与 NP21/W 模拟器的音频输出完美契合。在对反汇编进行最终的交叉验证后，我们得出了终极结论：NECOPN.DRV 在驱动初始化时，就从数据结构层面将软件 LFO “物理封印”了。
 
@@ -67,7 +75,6 @@ python player.py your_song.mid -o output.vgm --vgm
 0D73: e98501        jmp 0xefb
 ```
 LFO 是否能执行的唯一判定条件是 0x18 偏移处的 Bit 7。由于初始化时写入了 1，Bit 7 始终为 0。因此，中断程序每次轮询到这里，都会直接执行 jmp 0xefb，完美跳过所有 LFO 计算逻辑。只有驱动收到特定的私有 SysEx 触发 or [bx+0x18], 0x83 指令时，这层封印才会被解开。
-
 
 - **历史真相与听感验证：**
 
