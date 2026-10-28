@@ -52,7 +52,7 @@ python player.py your_song.mid -o output.vgm --vgm
  ### 🧪 Experimental: NECOPN with SSG Support (`necopn-drv-reverse-gai`)
 Located in the `experimental/necopn-drv-reverse-gai` directory, this is a highly experimental Python renderer based on the original NECOPN driver, but extended with **SSG (Software-Controlled Sound Generator) synthesis** to participate in MIDI playback.
 
-*   **Inspiration**: The allocation logic is inspired by the decompiled `MID2VGM` tool, which statically binds the quietest MIDI channels (lowest CC7 peak) to SSG channels to save FM polyphony.
+*   **Inspiration**: The allocation logic is inspired by the `MID2VGM` tool, which statically binds the quietest MIDI channels (lowest CC7 peak) to SSG channels to save FM polyphony.
 *   **Architecture**: Theoretically capable of providing real-time SSG responses during streaming MIDI playback.
 *   **Known Limitations**: Currently highly imperfect. Because `NECOPN` relies on real-time streaming decisions (unlike offline global allocation), it cannot predict future notes. This results in the intrinsic flaw of **allocation jitter**—in dense musical passages, notes may jump erratically between FM and SSG, and SSG slots may be chaotically stolen, causing inconsistent timbres.
 *   **Disclaimer**: This is an architectural extension, **not** the original behavior of `NECOPN.DRV` (which completely ignores SSG registers). Use with caution.
