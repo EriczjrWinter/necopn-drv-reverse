@@ -200,6 +200,8 @@ def main(argv=None) -> int:
                     help="SSG 相对 FM 的衰减（dB），默认 1.0")
     ap.add_argument("--drum-atten-db", type=float, default=0.0,
                     help="鼓相对 FM 的衰减（dB），默认 0.0")
+    ap.add_argument("--pure-ssg", action="store_true",
+                    help="纯 SSG 模式：屏蔽 FM，所有音符由 3 个 SSG 槽硬扛（LRKO 抢占）")
     args = ap.parse_args(argv)
 
     # 1. 优先尝试加载硬编码的 fixed_bank.py（脱离版权文件，且最精准）
@@ -244,7 +246,8 @@ def main(argv=None) -> int:
                           ssg_mode=args.ssg_mode,
                           ssg_midi_channels=ssg_chs,
                           ssg_atten_db=args.ssg_atten_db,
-                          drum_atten_db=args.drum_atten_db)
+                          drum_atten_db=args.drum_atten_db,
+						  pure_ssg=args.pure_ssg)
     system.load_bank(voices, fmoctave)
     if args.trace: system.trace = []
 

@@ -189,9 +189,13 @@ class NecopnSystem:
                  lfo_rate_scale: float = 1.0,
                  lfo_depth_scale: float = 1.0,
                  ssg_mode: str = "off",
+                 pure_ssg: bool = False,
                  ssg_midi_channels=(),
-                 ssg_atten_db: float = 1.0,
-                 drum_atten_db: float = 0.0):
+                 ssg_atten_db: float = 0.0,
+                 drum_atten_db: float = 0.0,
+                 fm_ssg_threshold: int = 4,
+                 ssg_plan=None):
+        
         self.cores = list(cores)
         self.clock = clock
         self.lfo_enabled = lfo_enabled
@@ -199,12 +203,37 @@ class NecopnSystem:
         self.lfo_rate_scale = max(0.01, float(lfo_rate_scale))
         self.lfo_depth_scale = max(0.0, float(lfo_depth_scale))
 
+        # --- 1. 纯 SSG 模式拦截 ---
+        self.pure_ssg = pure_ssg
+        if self.pure_ssg:
+            ssg_mode = "manual"
+            ssg_midi_channels = [c for c in range(16) if c != 9]
+
+        # --- 2. SSG 状态初始化 ---
+        self.ssg_mode = ssg_mode
+        self.ssg_atten_db = float(ssg_atten_db)
+        self.drum_atten_db = float(drum_atten_db)
+        self.ssg_midi_channels = set(ssg_midi_channels)
+        self.fm_ssg_threshold = max(1, int(fm_ssg_threshold))
+        self.ssg_plan = ssg_plan or {}
+        self.ssg_chan_range = {ch: (start, start + peak)
+                               for ch, (start, peak) in self.ssg_plan.items()}
+                               
+        self.n_ssg = 3 if self.ssg_mode != "off" else 0
+        self.ssg_slots: List[SsgSlot] = [SsgSlot() for _ in range(self.n_ssg)]
+        self.ssg_states: List[SsgState] = [SsgState() for _ in range(self.n_ssg)]
+        self._ssg_tp_table = self._build_ssg_tp_table()
+
+        # --- 3. FM 状态初始化 ---
         channels_per_core = 3
         self.cpc = channels_per_core
         self.bend_range = bend_range
         self.n_ch = len(self.cores) * self.cpc
+        
+        # 关键点：必须有这一行，_init_hardware 才不会报错
         self.units = [ChipUnit(c, i, self.cpc, i * self.cpc)
                       for i, c in enumerate(self.cores)]
+                      
         self.slots: List[Slot] = [Slot() for _ in range(self.n_ch)]
         self.vstates: List[VoiceState] = [VoiceState() for _ in range(self.n_ch)]
         self.programs = [0] * 16
@@ -215,18 +244,9 @@ class NecopnSystem:
         self.fmoctave = [0] * 128
         self.trace: Optional[List[Tuple[float, int, int, int]]] = None
         self.time = 0.0
-        self.random_state = 0  # 全局 LFSR 状态
+        self.random_state = 0
 
-        # ---- SSG 状态（单颗物理 OPNA，3 个槽，只走 units[0]） ----
-        self.ssg_mode = ssg_mode
-        self.ssg_atten_db = float(ssg_atten_db)
-        self.drum_atten_db = float(drum_atten_db)
-        self.ssg_midi_channels = set(ssg_midi_channels)
-        self.n_ssg = 3 if ssg_mode != "off" else 0
-        self.ssg_slots: List[SsgSlot] = [SsgSlot() for _ in range(self.n_ssg)]
-        self.ssg_states: List[SsgState] = [SsgState() for _ in range(self.n_ssg)]
-        self._ssg_tp_table = self._build_ssg_tp_table()
-
+        # --- 4. 最后调用硬件初始化 ---
         self._init_hardware()
 
     def load_bank(self, voices: Sequence[Voice], fmoctave: Sequence[int]) -> None:
@@ -326,10 +346,28 @@ class NecopnSystem:
         return -1
 
     def _ssg_allocate(self, midi_ch: int, note: int) -> int:
-        # 不抢占：3 个槽，抢占易产生断音
-        for i, s in enumerate(self.ssg_slots):
-            if not s.active:
+        # 1. 优先找完全空闲（idle）的槽位
+        for i in range(self.n_ssg):
+            if self.ssg_states[i].env_state == "idle":
                 return i
+                
+        # 2. 其次找正在 release 的槽位
+        for i in range(self.n_ssg):
+            if self.ssg_states[i].env_state == "release":
+                return i
+                
+        # 3. 如果全在响
+        if self.pure_ssg:
+            # 纯 SSG 模式：踢掉最老的音符（LRKO）
+            oldest_gch = 0
+            oldest_serial = 9999999
+            for i in range(self.n_ssg):
+                if self.ssg_slots[i].serial < oldest_serial:
+                    oldest_serial = self.ssg_slots[i].serial
+                    oldest_gch = i
+            return oldest_gch
+            
+        # 否则返回 -1，交给 FM
         return -1
 
     def ssg_note_on(self, midi_ch: int, note: int, velocity: int) -> bool:
@@ -514,6 +552,11 @@ class NecopnSystem:
         # SSG 优先路径（ssg_first / manual）
         try_ssg_first = (self.ssg_mode == "ssg_first" or
                          (self.ssg_mode == "manual" and midi_ch in self.ssg_midi_channels))
+        # === 1. SSG 优先 ===
+        if self.pure_ssg:
+            # 纯 SSG 模式：所有非鼓音符，直接交给 SSG，不管接不接得住
+            self.ssg_note_on(midi_ch, note, velocity)
+            return
         if try_ssg_first:
             if self.ssg_note_on(midi_ch, note, velocity):
                 return
