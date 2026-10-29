@@ -57,6 +57,37 @@ python player.py your_song.mid -o output.vgm --vgm
 *   **已知限制**：目前并不完善。因为 `NECOPN` 是基于实时事件流的驱动（无法像离线全局分配那样预知未来），存在**分配抖动**的固有缺陷——在复杂密集的曲目中，同一通道的音符可能在 FM 和 SSG 之间反复横跳，SSG 槽位也会被混乱抢占，导致音色不连贯。
 *   **免责声明**：这是复现工具的架构扩展，**并非** `NECOPN.DRV` 的原生行为（原驱动完全未初始化 SSG 寄存器）。请谨慎食用。
 
+### 💻 指令 (实验性)
+参数说明 
+
+--pure-ssg	纯 SSG 模式。彻底禁用 FM，强制所有音符使用 3 个 SSG 通道，满了就踢掉最老的音（体验纯正 3 音源大逃杀）。
+
+off: 关闭（默认）。
+
+manual: 仅将指定的 MIDI 通道分配给 SSG。
+
+fm_first: 当 FM 活跃音符数达到阈值时，溢出给 SSG。
+
+ssg_first: 优先给 SSG，满了才给 FM。
+
+--ssg-channels "0,1"	Comma-separated MIDI channels to be routed to SSG (Only valid in manual mode).	配合 manual 模式，逗号分隔的 MIDI 通道号（如 0,1,2）。
+
+--ssg-atten-db FLOAT	Global SSG volume attenuation in dB. 0.0 is full volume, positive values reduce volume, negative values increase it.	SSG 全局音量衰减（dB）。0.0 为满音量，正值减小音量，负值可强行增益。
+
+--fm-ssg-threshold INT	FM active voice count required to trigger SSG routing in fm_first mode (Default: 4).	在 fm_first 模式下，触发 SSG 分配的 FM 活跃音符数阈值（默认 4）。
+Usage Examples / 使用示例:
+
+```bash
+# 1. Pure SSG mode (The 3-channel hunger games)
+python player.py song.mid -o out.wav --pure-ssg --ssg-atten-db 0
+
+# 2. Let FM handle the main load, overflow to SSG when >4 voices are active
+python player.py song.mid -o out.wav --ssg-mode fm_first --fm-ssg-threshold 4
+
+# 3. Manual routing (Assign only MIDI channel 2 to SSG)
+python player.py song.mid -o out.wav --ssg-mode manual --ssg-channels 2
+```
+
 ### 🎛️ 关于软件 LFO 的最终结论：它根本“没被启用”
 在最初的逆向工程和听感测试中，我们注意到启用 --enable-lfo 会导致明显的相位漂移（产生“一大一小”的波形跳跃）或者爆音，而“无 LFO”模式则与 NP21/W 模拟器的音频输出完美契合。在对反汇编进行最终的交叉验证后，我们得出了终极结论：NECOPN.DRV 在驱动初始化时，就从数据结构层面将软件 LFO “物理封印”了。
 
