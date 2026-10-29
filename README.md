@@ -60,13 +60,19 @@ Located in the `experimental/necopn-drv-reverse-gai` directory, this is a highly
 ### 💻 CLI Arguments (Experimental)
 Description 
 --pure-ssg	Pure SSG Mode. Disables FM entirely. Forces all non-drum notes to share the 3 SSG channels with LRKO (Last Recently Killed Oldest) voice stealing.	
+
 --ssg-mode {off, manual, fm_first, ssg_first}	Sets the real-time routing strategy.
+
 off: Disabled (Default).
+
 manual: Routes specified MIDI channels to SSG.
+
 fm_first: Routes to SSG only when FM active voices reach the threshold.
 
 --ssg-channels "0,1"	Comma-separated MIDI channels to be routed to SSG (Only valid in manual mode).	
+
 --ssg-atten-db FLOAT	Global SSG volume attenuation in dB. 0.0 is full volume, positive values reduce volume, negative values increase it.	
+
 --fm-ssg-threshold INT	FM active voice count required to trigger SSG routing in fm_first mode (Default: 4).	
 
 ```
