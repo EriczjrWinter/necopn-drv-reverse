@@ -57,6 +57,29 @@ Located in the `experimental/necopn-drv-reverse-gai` directory, this is a highly
 *   **Known Limitations**: Currently highly imperfect. Because `NECOPN` relies on real-time streaming decisions (unlike offline global allocation), it cannot predict future notes. This results in the intrinsic flaw of **allocation jitter**—in dense musical passages, notes may jump erratically between FM and SSG, and SSG slots may be chaotically stolen, causing inconsistent timbres.
 *   **Disclaimer**: This is an architectural extension, **not** the original behavior of `NECOPN.DRV` (which completely ignores SSG registers). Use with caution.
 
+### 💻 CLI Arguments (Experimental)
+Description 
+--pure-ssg	Pure SSG Mode. Disables FM entirely. Forces all non-drum notes to share the 3 SSG channels with LRKO (Last Recently Killed Oldest) voice stealing.	
+--ssg-mode {off, manual, fm_first, ssg_first}	Sets the real-time routing strategy.
+off: Disabled (Default).
+manual: Routes specified MIDI channels to SSG.
+fm_first: Routes to SSG only when FM active voices reach the threshold.
+
+--ssg-channels "0,1"	Comma-separated MIDI channels to be routed to SSG (Only valid in manual mode).	
+--ssg-atten-db FLOAT	Global SSG volume attenuation in dB. 0.0 is full volume, positive values reduce volume, negative values increase it.	
+--fm-ssg-threshold INT	FM active voice count required to trigger SSG routing in fm_first mode (Default: 4).	
+
+```
+# 1. Pure SSG mode (The 3-channel hunger games)
+python player.py song.mid -o out.wav --pure-ssg --ssg-atten-db 0
+
+# 2. Let FM handle the main load, overflow to SSG when >4 voices are active
+python player.py song.mid -o out.wav --ssg-mode fm_first --fm-ssg-threshold 4
+
+# 3. Manual routing (Assign only MIDI channel 2 to SSG)
+python player.py song.mid -o out.wav --ssg-mode manual --ssg-channels 2
+```
+
 ### 🎛️ The Ultimate Conclusion on the Software LFO: It Was Never Enabled
 During our initial reverse engineering and listening tests, we noticed that enabling --enable-lfo caused audible phase drifting ("big-small" waveform jumps) or clipping, and that the "LFO disabled" mode perfectly matched the audio output of the NP21/W emulator. After a final cross-examination of the disassembly, we have reached the ultimate conclusion: NECOPN.DRV explicitly "sealed" the software LFO at the data structure level right during driver initialization.
 
