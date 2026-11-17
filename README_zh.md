@@ -7,6 +7,8 @@
 > **🎯 项目状态**：目前在音高、包络、通道分配和鼓组行为上已基本完全复现实机效果。软件 LFO 的明显听感问题（电磁噪音、过度颤动）已经解决，但仍可能存在尚未探明的怪癖，因此默认关闭。
 > 
 > **📦 开箱即用**：仓库已内置逆向提取的硬编码音色库 `fixed_bank.py`，**你不需要原版 `NECOPN.DRV` 即可直接运行播放器。**
+>
+> **⚡ 实时版**：`NECOPN-RT/` 提供 MIDI 直接出声的实时播放器（GUI/CLI，22 ms 延迟，循环 / RHY 目录 / 仅 SSG 鼓 / 导出 WAV / 中英文）。详见 **[NECOPN-RT/README_zh.md](NECOPN-RT/README_zh.md)**。
 
 ## 🏗️ 复现架构与核心说明
 
@@ -25,6 +27,39 @@ PC-98 真实硬件虽然搭载了 YM2608 (OPNA) 芯片，但官方驱动在软�
 2. **原生打击乐采样 (`RHY` 文件夹)**
    * **获取**：受版权限制，你需要自行准备 6 个 16-bit PCM 格式的 WAV 文件，文件名必须严格为：`2608_bd.wav`、`2608_sd.wav`、`2608_top.wav`、`2608_hh.wav`、`2608_tom.wav`、`2608_rim.wav`。
    * **放置**：建议放在一个文件夹（如 `RHY/`）中。运行时**必须通过 `--rhythm-rom <文件夹路径>` 手动指定**，否则鼓组将静音。
+
+## ⚡ 实时播放器（NECOPN-RT）
+
+`NECOPN-RT/` 是本项目的实时版：MIDI 直接出声、不落盘，和离线 `player.py` 共用同一套 NECOPN.DRV 驱动行为。它有自己的 [中文说明](NECOPN-RT/README_zh.md) / [English](NECOPN-RT/README.md)。
+
+### 快速开始
+```bash
+# GUI：循环 / RHY 目录 / 仅 SSG 鼓 / 导出 WAV / 中英文
+python NECOPN-RT/app.py
+
+# CLI
+python NECOPN-RT/rtplayer.py your_song.mid
+python NECOPN-RT/rtplayer.py your_song.mid --core nuked1
+python NECOPN-RT/rtplayer.py your_song.mid --ssg-only
+python NECOPN-RT/rtplayer.py your_song.mid --export out.wav
+```
+
+### 三个实时核心
+| `--core` | 组成 | 实测 |
+|---|---|---:|
+| `fmgen`（默认） | 完整 OPNA：FM + SSG + ADPCM-B + 节奏 | 92.7x 实时 |
+| `nuked1` | 单颗 Nuked OPN2（6 FM 声道）+ emu2149 + PCM 节奏 | 15.3x |
+| `nuked` | 两颗 Nuked OPN2（3+3）+ emu2149 + PCM 节奏 | 8.3x |
+
+完整 Nuked YM2608 LLE 实测 **0.24x**（`-O3 -march=native`），只做离线参考，不进实时路径。
+
+### 关键点
+- 芯片 **55 555 Hz**（8 MHz / 144）→ 4 点 Catmull-Rom → **48 000 Hz**；`--clock 7987200` 使用精确 PC-98 55 466 Hz。
+- **节奏采样不随仓库分发**：`--rhythm-dir` 指向你自己的 `RHY/`（离线 `player.py` 用 `--rhythm-rom`）；缺失时退回 SSG 合成鼓。
+- WASAPI 256 帧：**22.0 ms** 延迟，3 秒 **0 underrun / 0 xrun**。
+- 单文件 EXE 用 `NECOPN-RT/build_exe.ps1` 构建（仓库不带 24.8 MB 的二进制；可放 Releases）。
+
+更多：[性能实测](NECOPN-RT/docs/PERFORMANCE.md) · [采样率](NECOPN-RT/docs/SAMPLE_RATE.md) · [节奏/版权](NECOPN-RT/docs/RHYTHM.md)
 
 ## 🚀 快速开始
 

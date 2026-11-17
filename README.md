@@ -7,6 +7,8 @@ This project is a deep reverse engineering and high-fidelity reimplementation of
 > **🎯 Status**: Basic complete reproduction of the original hardware (Pitch, Envelope, Voice allocation, and Rhythm) is achieved. Software LFO is now functional with all previously audible artifacts (electromagnetic noise, excessive warble) resolved — though undiscovered quirks may remain.
 > 
 > **📦 Out-of-the-box**: A hardcoded `fixed_bank.py` (extracted from the original driver) is included. **You do NOT need the original `NECOPN.DRV` to run the player.**
+>
+> **⚡ Realtime**: `NECOPN-RT/` plays MIDI directly (GUI/CLI, 22 ms latency, loop / RHY folder / SSG-only / WAV export / zh-en). See **[NECOPN-RT/README.md](NECOPN-RT/README.md)**.
 
 ## 🏗️ Architecture & Core Notes
 
@@ -25,6 +27,39 @@ We initially used `ymfm`. However, during waveform comparisons against real hard
 2. **Rhythm WAVs (`RHY` folder)**
    * **Source**: You must provide 6 16-bit PCM WAVs named exactly: `2608_bd.wav`, `2608_sd.wav`, `2608_top.wav`, `2608_hh.wav`, `2608_tom.wav`, `2608_rim.wav`.
    * **Location**: Place them in a folder (e.g., `RHY/`). You **MUST specify the path manually** using `--rhythm-rom <path>`, otherwise rhythm will be silent.
+
+## ⚡ Realtime Player (NECOPN-RT)
+
+`NECOPN-RT/` is the realtime version: MIDI plays directly, no files written, sharing the same NECOPN.DRV driver behavior as the offline `player.py`. Its own docs: [English](NECOPN-RT/README.md) / [简体中文](NECOPN-RT/README_zh.md).
+
+### Quick start
+```bash
+# GUI: loop / RHY folder / SSG-only / WAV export / zh-en
+python NECOPN-RT/app.py
+
+# CLI
+python NECOPN-RT/rtplayer.py your_song.mid
+python NECOPN-RT/rtplayer.py your_song.mid --core nuked1
+python NECOPN-RT/rtplayer.py your_song.mid --ssg-only
+python NECOPN-RT/rtplayer.py your_song.mid --export out.wav
+```
+
+### Backends
+| `--core` | Chips | Measured |
+|---|---|---:|
+| `fmgen` (default) | full OPNA: FM + SSG + ADPCM-B + rhythm | 92.7x realtime |
+| `nuked1` | one Nuked OPN2 (6 FM channels) + emu2149 + PCM rhythm | 15.3x |
+| `nuked` | two Nuked OPN2 (3+3) + emu2149 + PCM rhythm | 8.3x |
+
+The full Nuked YM2608 LLE measures **0.24x** (`-O3 -march=native`) and is kept as an offline reference only.
+
+### Notes
+- Native **55 555 Hz** (8 MHz / 144) → 4-point Catmull-Rom → **48 000 Hz**; `--clock 7987200` selects the exact PC-98 55 466 Hz.
+- **No rhythm samples are bundled**: point `--rhythm-dir` at your own `RHY/` (offline `player.py` uses `--rhythm-rom`); SSG fallback drums are used when missing.
+- WASAPI 256 frames: **22.0 ms** latency, **0 underrun / 0 xrun** over 3 s.
+- Build the single-file EXE with `NECOPN-RT/build_exe.ps1` (the repo does not ship the 24.8 MB binary; use Releases).
+
+More: [Performance](NECOPN-RT/docs/PERFORMANCE.md) · [Sample rate](NECOPN-RT/docs/SAMPLE_RATE.md) · [Rhythm/licensing](NECOPN-RT/docs/RHYTHM.md)
 
 ## 🚀 Quick Start
 
