@@ -1,6 +1,6 @@
 # NECOPN-RT — OPNA (YM2608) 实时播放器
 
-基于 [`necopn-drv-reverse-main`](../necopn-drv-reverse-main) 的 NECOPN.DRV 逆向成果，
+基于 [`necopn-drv-reverse-main`](../necopn-drv-reverse) 的 NECOPN.DRV 逆向成果，
 把 **离线渲染** 搬成 **实时播放**：MIDI → 寄存器写 → YM2608 → 55 555 Hz → 48 kHz → 声卡。
 
 > 这个项目是 `OPMMIDI-RT`（OPM 实时版）的姊妹项目，不改动那边任何文件。
@@ -65,7 +65,7 @@ Timer-A tick）、`Resampler`（55 555 → 48 000）和 `Engine`（生产者线�
 
 ### 为什么不是直接用 Nuked OPNA LLE？
 
-`OPN_Chipset-main\nuked_lle` 里确实有完整的 Nuked YM2608 LLE（FM+SSG+ADPCM+节奏），
+`nuked_lle` 里确实有完整的 Nuked YM2608 LLE（FM+SSG+ADPCM+节奏），
 但实测 **单芯片 -O2 要 4517 ms CPU / 音频秒 = 0.22x 实时**，双芯片 0.12x，
 实时版跑不动；而且它是 **GPLv2+**，`fmopna_rom.h` 里还内嵌了 8 KB 的节奏 ROM
 （`rss_rom[8192]`），和“不打包采样 / MIT 分发”冲突。
