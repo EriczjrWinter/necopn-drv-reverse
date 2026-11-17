@@ -47,7 +47,7 @@ Build the GUI EXE with `.\build_exe.ps1`; it bundles `opn2.dll`, `ssg.dll`,
 channels: unit0 uses physical ch0-2, unit1 uses ch3-5 (bank 1, key-on codes 4-6).
 Loudness is matched to the two-chip path (5.mid RMS 262.7 vs 241.2).
 
-The full Nuked YM2608 LLE (`OPN_Chipset-main\nuked_lle`) was measured at
+The full Nuked YM2608 LLE (`nuked_lle`) was measured at
 **0.22x realtime for one chip** (`-O2`), is GPLv2+, and embeds the 8 KB rhythm
 ROM, so it is kept only as an offline reference/validator.
 
