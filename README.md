@@ -84,6 +84,25 @@ python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
 python player.py your_song.mid -o output.vgm --vgm
 ```
 
+### 🧪 Experimental: OPN MIDI Synth (3 FM + 3 SSG, `opn-midi-synth`)
+Located in `experimental/opn-midi-synth`, this takes the idea to its limit: **drop the drums, give all 6 voices to melody** — 3 FM + 3 SSG, exactly one YM2203 (OPN).
+
+*   **How it differs from `necopn-drv-reverse-gai`**: GAI bolts SSG onto a 6-FM layout and routes dynamically at runtime, which causes allocation jitter. The OPN version treats SSG as a **fixed section**: every MIDI channel is locked to the FM group or the SSG group at load time, and allocation only happens inside that group, so a channel never jumps between FM and SSG.
+*   **Voice stealing**: reuses NECOPN's "battle royale" — same-channel released slot → free slot in the group → oldest slot on the highest MIDI channel; the note is dropped if the stolen channel number is lower.
+*   **SSG envelopes**: modelled on the **MID2VGM beta 5** SSG instrument table (psgtick ≈ 11.6 ms, decay2 up to 1.67 s/step), so notes sustain and ring out instead of being short plucks.
+*   **Core**: fmgen OPNA ch0-2 + SSG, used as an OPN (its FM channels are register-compatible with the YM2203).
+*   **Known costs**: GM MIDI is not written for 3 FM + 3 SSG, so songs with more than 6 melodic channels drop or steal notes; drums are gone entirely; SSG is a square wave, so pianos, strings and long pads sound noticeably "electronic". This is an OPN arrangement, not a NECOPN reproduction.
+*   **Disclaimer**: an experimental arrangement tool, **not** the original `NECOPN.DRV` behavior.
+
+```bash
+python experimental/opn-midi-synth/opn_synth.py your_song.mid -o out.wav
+python experimental/opn-midi-synth/opn_synth.py your_song.mid --list-channels
+python experimental/opn-midi-synth/opn_synth.py your_song.mid --ssg-channels 3,4,5
+python experimental/opn-midi-synth/opn_synth.py your_song.mid --solo ssg --duration 10 -o ssg.wav
+```
+
+See [experimental/opn-midi-synth/README_zh.md](experimental/opn-midi-synth/README_zh.md).
+
  ### 🧪 Experimental: NECOPN with SSG Support (`necopn-drv-reverse-gai`)
 Located in the `experimental/necopn-drv-reverse-gai` directory, this is a highly experimental Python renderer based on the original NECOPN driver, but extended with **SSG (Software-Controlled Sound Generator) synthesis** to participate in MIDI playback.
 

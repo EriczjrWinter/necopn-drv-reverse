@@ -84,6 +84,25 @@ python player.py your_song.mid -o output.wav --enable-lfo --lfo-divisor 5
 python player.py your_song.mid -o output.vgm --vgm
 ```
 
+### 🧪 实验性分支：OPN MIDI 合成器（3 FM + 3 SSG，`opn-midi-synth`）
+位于 `experimental/opn-midi-synth` 目录下。这是把上面的思路推到极致的版本：**放弃鼓组，6 个声部全给旋律**——3 个 FM + 3 个 SSG，正好是一颗 YM2203 (OPN) 的编制。
+
+*   **和 `necopn-drv-reverse-gai` 的区别**：GAI 是在 6 FM 的编制上外挂 SSG，靠实时溢出决策，因此有分配抖动；OPN 版把 SSG 当成**固定编制**，每个 MIDI 通道在加载时就锁定 FM 组或 SSG 组，只在组内抢音，同一通道永远不会 FM/SSG 横跳。
+*   **抢音策略**：沿用 NECOPN 的“大逃杀”——同通道释放槽 → 组内空闲槽 → 最高 MIDI 通道里最老的槽，被抢通道号更低就丢音。
+*   **SSG 音色**：包络参考 **MID2VGM beta 5** 的 SSG instrument table（psgtick ≈ 11.6 ms，decay2 可到 1.67 s/步），长音会持续/拖尾，而不是短促的 pluck。
+*   **核心**：用 fmgen OPNA 的 ch0-2 + SSG 当 OPN 用（寄存器与 YM2203 的 FM 通道兼容）。
+*   **已知代价**：GM MIDI 不是为 3 FM + 3 SSG 写的，旋律通道多于 6 条时会丢音/抢音；鼓组完全放弃；SSG 只有方波，钢琴/弦乐/长音 pad 会明显“电子化”。这是 OPN 改编，不是 NECOPN 还原。
+*   **免责声明**：这是实验性改编工具，**不是** `NECOPN.DRV` 的原生行为。
+
+```bash
+python experimental/opn-midi-synth/opn_synth.py your_song.mid -o out.wav
+python experimental/opn-midi-synth/opn_synth.py your_song.mid --list-channels
+python experimental/opn-midi-synth/opn_synth.py your_song.mid --ssg-channels 3,4,5
+python experimental/opn-midi-synth/opn_synth.py your_song.mid --solo ssg --duration 10 -o ssg.wav
+```
+
+详见 [experimental/opn-midi-synth/README_zh.md](experimental/opn-midi-synth/README_zh.md)。
+
 ### 🧪 实验性分支：支持 SSG 的 NECOPN (`necopn-drv-reverse-gai`)
 位于 `experimental/necopn-drv-reverse-gai` 目录下。这是一个基于原版 NECOPN 驱动的实验性 Python 渲染器，但加入了 **SSG（方波音源）合成**以参与 MIDI 播放。
 
